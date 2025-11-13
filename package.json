@@ -1,20 +1,23 @@
 {
-  "name": "template-hubot-script",
-  "description": "Template for a Hubot script package.",
-  "version": "0.0.0",
-  "author": "Your Name <name@example.com>",
-  "homepage": "https://github.com/stephenyeargin/template-hubot-script",
+  "name": "hubot-ollama",
+  "description": "Hubot script for integrating with Ollama local LLMs",
+  "version": "1.0.0",
+  "author": "Stephen Yeargin <stephen@yearg.in>",
+  "homepage": "https://github.com/stephenyeargin/hubot-ollama",
   "license": "MIT",
   "keywords": [
     "hubot",
-    "hubot-scripts"
+    "hubot-scripts",
+    "ollama",
+    "llm",
+    "ai"
   ],
   "repository": {
     "type": "git",
-    "url": "git://github.com/stephenyeargin/template-hubot-script.git"
+    "url": "git://github.com/stephenyeargin/hubot-ollama.git"
   },
   "bugs": {
-    "url": "https://github.com/stephenyeargin/template-hubot-script/issues"
+    "url": "https://github.com/stephenyeargin/hubot-ollama/issues"
   },
   "peerDependencies": {
     "hubot": ">=3 || 0.0.0-development"

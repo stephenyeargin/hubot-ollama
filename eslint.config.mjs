@@ -5,6 +5,30 @@ import pluginImport from 'eslint-plugin-import';
 import pluginN from 'eslint-plugin-n';
 import pluginPromise from 'eslint-plugin-promise';
 
+// Custom rule groups for clarity
+const baseRules = {
+  // Core quality
+  'eqeqeq': ['warn', 'smart'],
+  'curly': ['warn', 'multi-line'],
+  'no-console': ['warn', { allow: ['warn', 'error'] }],
+  'no-unused-vars': ['warn', { args: 'after-used', ignoreRestSiblings: true }],
+  'no-implicit-coercion': 'warn',
+  'prefer-const': 'warn',
+  'object-shorthand': ['warn', 'always'],
+  'arrow-body-style': ['warn', 'as-needed'],
+  // Import hygiene
+  'import/order': ['warn', {
+    'groups': ['builtin', 'external', 'internal', 'parent', 'sibling', 'index'],
+    'newlines-between': 'always',
+    'alphabetize': { order: 'asc', caseInsensitive: true },
+  }],
+  'import/no-duplicates': 'warn',
+  'import/newline-after-import': ['warn', { count: 1 }],
+  // Node best practices
+  'n/no-process-exit': 'warn',
+  'promise/no-return-wrap': 'warn',
+};
+
 export default [
   // Global ignores
   {
@@ -25,18 +49,28 @@ export default [
   pluginImport.flatConfigs.recommended,
   pluginN.configs['flat/recommended'],
   pluginPromise.configs['flat/recommended'],
-  // Project-specific rules that were in .eslintrc.js
+  // Project-specific rules and stricter defaults
   {
+    linterOptions: {
+      reportUnusedDisableDirectives: true,
+    },
     rules: {
+      ...baseRules,
       'no-param-reassign': ['error', { props: false }],
     },
   },
   // Test file overrides
   {
     files: ['test/**'],
+    languageOptions: {
+      globals: {
+        ...globals.jest,
+      },
+    },
     rules: {
       'n/no-unpublished-require': 'off',
       'n/no-unpublished-import': 'off',
+      'no-console': 'off', // Allow console in tests
     },
   },
 ];
