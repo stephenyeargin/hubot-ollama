@@ -1,5 +1,7 @@
 # hubot-ollama
 
+[![Node CI](https://github.com/stephenyeargin/hubot-ollama/actions/workflows/nodejs.yml/badge.svg)](https://github.com/stephenyeargin/hubot-ollama/actions/workflows/nodejs.yml)
+
 > Local LLM answers in your Hubot via the [Ollama](https://ollama.ai/) CLI.
 
 ## Quick Start
