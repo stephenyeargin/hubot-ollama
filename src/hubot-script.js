@@ -9,8 +9,6 @@
 //
 // Commands:
 //   hubot ask <prompt> - Ask Ollama a question
-//   hubot ollama <prompt> - Ask Ollama a question
-//   hubot llm <prompt> - Ask Ollama a question
 //
 
 const { spawn } = require('child_process');
@@ -31,6 +29,9 @@ module.exports = (robot) => {
 
   // Sanitize user-provided text: strip control chars except tab/newline/carriage-return
   const sanitizeText = (text) => (text || '').replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
+
+  // Strip ANSI escape codes (color codes, etc.) from text
+  const stripAnsiCodes = (text) => (text || '').replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
 
   // Resolve an absolute path to the ollama binary (env override or search PATH)
   const resolveOllamaPath = () => {
@@ -72,10 +73,11 @@ module.exports = (robot) => {
 
     let output = '';
     let errorOutput = '';
+    let isModelInstalling = false;
 
     // Collect stdout
     ollama.stdout.on('data', (data) => {
-      const chunk = data.toString();
+      const chunk = stripAnsiCodes(data.toString());
       output += chunk;
       if (DEBUG_ENABLED) {
         robot.logger.debug(`Ollama stdout chunk (${chunk.length} chars)`);
@@ -90,7 +92,11 @@ module.exports = (robot) => {
 
     // Collect stderr
     ollama.stderr.on('data', (data) => {
-      const chunk = data.toString();
+      const chunk = stripAnsiCodes(data.toString());
+      // Check if this is model installation output
+      if (/pulling|downloading|verifying|success/i.test(chunk)) {
+        isModelInstalling = true;
+      }
       errorOutput += chunk;
       if (DEBUG_ENABLED) {
         robot.logger.debug(`Ollama stderr chunk (${chunk.length} chars): ${chunk.slice(0,200)}`);
@@ -119,7 +125,12 @@ module.exports = (robot) => {
       }
       if (code !== 0) {
         robot.logger.error(`Ollama process exited with code ${code}`);
-        callback(new Error(`Ollama error: ${errorOutput || 'Unknown error'}`), null);
+        // Don't show installation output as errors
+        if (isModelInstalling) {
+          callback(new Error(`The model '${defaultModel}' is being installed. Please try again in a moment.`), null);
+        } else {
+          callback(new Error(`Ollama error: ${errorOutput || 'Unknown error'}`), null);
+        }
         return;
       }
 
