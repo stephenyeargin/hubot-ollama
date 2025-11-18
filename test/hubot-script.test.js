@@ -343,4 +343,39 @@ describe('hubot-ollama', () => {
       ]);
     });
   });
+
+  describe('strips ANSI color codes from output', () => {
+    beforeEach((done) => {
+      // Simulate output with ANSI color codes
+      mockSpawn.mockReturnValue(createMockProcess({
+        stdout: '\x1B[32mThis is green text\x1B[0m and \x1B[1;31mbold red\x1B[0m normal',
+      }));
+      room.user.say('alice', 'hubot ask test');
+      setTimeout(done, 150);
+    });
+
+    it('removes ANSI codes from response', () => {
+      expect(room.messages).toEqual([
+        ['alice', 'hubot ask test'],
+        ['hubot', 'This is green text and bold red normal'],
+      ]);
+    });
+  });
+
+  describe('model installation in progress', () => {
+    beforeEach((done) => {
+      mockSpawn.mockReturnValue(createMockProcess({
+        exitCode: 1,
+        stderr: '\x1B[32mpulling manifest\x1B[0m\npulling model...',
+      }));
+      room.user.say('alice', 'hubot ask test');
+      setTimeout(done, 150);
+    });
+
+    it('provides clean error message without installation spam', () => {
+      expect(room.messages[1][1]).toContain('is being installed');
+      expect(room.messages[1][1]).toContain('try again in a moment');
+      expect(room.messages[1][1]).not.toContain('pulling');
+    });
+  });
 });
