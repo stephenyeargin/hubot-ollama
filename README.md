@@ -2,22 +2,24 @@
 
 [![Node CI](https://github.com/stephenyeargin/hubot-ollama/actions/workflows/nodejs.yml/badge.svg)](https://github.com/stephenyeargin/hubot-ollama/actions/workflows/nodejs.yml)
 
-> Local LLM answers in your Hubot via the [Ollama](https://ollama.ai/) CLI.
+> Hubot script for integrating with [Ollama](https://ollama.ai/) - run local or cloud LLMs in your chat.
 
 ## Quick Start
 1. Install Ollama and pull a model:
    ```bash
+   # Install Ollama from https://ollama.com
    ollama pull llama3.2
+   # Ollama server starts automatically after installation
    ```
-2. Add the script to your Hubot:
+2. Add this package to your Hubot:
    ```bash
    npm install hubot-ollama --save
    ```
-   `external-scripts.json`:
+   Then add to `external-scripts.json`:
    ```json
    ["hubot-ollama"]
    ```
-3. Ask something:
+3. Start chatting:
    ```text
    hubot ask what is an LLM?
    hubot ollama explain async/await
@@ -34,22 +36,36 @@
 Prompts are sanitized and truncated if they exceed the configured limit.
 
 ## Configuration
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `HUBOT_OLLAMA_MODEL` | `llama3.2` | Model name (validated: `[A-Za-z0-9._:-]+`) |
-| `HUBOT_OLLAMA_SYSTEM_PROMPT` | Built‑in concise chat prompt | Override system instructions |
-| `HUBOT_OLLAMA_MAX_PROMPT_CHARS` | `2000` | Truncate overly long user prompts |
-| `HUBOT_OLLAMA_TIMEOUT_MS` | `60000` | Kill long-running model processes |
-| `HUBOT_OLLAMA_CONTEXT_TTL_MS` | `600000` (10 min) | Time to maintain conversation history; `0` to disable |
-| `HUBOT_OLLAMA_CONTEXT_TURNS` | `5` | Maximum number of conversation turns to remember |
-| `HUBOT_OLLAMA_CONTEXT_SCOPE` | `room-user` | Context isolation: `room-user`, `room`, or `thread` |
-| `HUBOT_OLLAMA_DEBUG` | (unset) | `true`/`1` to log stdout/stderr chunks |
-| `HUBOT_OLLAMA_STREAM` | (unset) | `true`/`1` to stream partial chunks to chat |
-| `HUBOT_OLLAMA_CMD` | (auto-resolve) | Path to `ollama` binary if not in PATH |
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `HUBOT_OLLAMA_MODEL` | Optional | `llama3.2` | Model name (validated: `[A-Za-z0-9._:-]+`) |
+| `HUBOT_OLLAMA_HOST` | Optional | `http://127.0.0.1:11434` | Ollama server URL |
+| `HUBOT_OLLAMA_API_KEY` | Optional | (unset) | API key for [Ollama cloud](https://ollama.com/settings/keys) access |
+| `HUBOT_OLLAMA_SYSTEM_PROMPT` | Optional | Built‑in concise chat prompt | Override system instructions |
+| `HUBOT_OLLAMA_MAX_PROMPT_CHARS` | Optional | `2000` | Truncate overly long user prompts |
+| `HUBOT_OLLAMA_TIMEOUT_MS` | Optional | `60000` (60 sec) | Abort request after this duration |
+| `HUBOT_OLLAMA_STREAM` | Optional | `false` | Stream partial chunks to chat (`true`/`1` to enable) |
+| `HUBOT_OLLAMA_CONTEXT_TTL_MS` | Optional | `600000` (10 min) | Time to maintain conversation history; `0` to disable |
+| `HUBOT_OLLAMA_CONTEXT_TURNS` | Optional | `5` | Maximum number of conversation turns to remember |
+| `HUBOT_OLLAMA_CONTEXT_SCOPE` | Optional | `room-user` | Context isolation: `room-user`, `room`, or `thread` |
 
 Change model:
 ```bash
 export HUBOT_OLLAMA_MODEL=mistral
+```
+Connect to remote Ollama server:
+```bash
+export HUBOT_OLLAMA_HOST=http://my-ollama-server:11434
+```
+Enable streaming responses (sends chunks as they arrive):
+```bash
+export HUBOT_OLLAMA_STREAM=true
+```
+Use Ollama cloud (requires [API key](https://ollama.com/settings/keys)):
+```bash
+export HUBOT_OLLAMA_HOST=https://ollama.com
+export HUBOT_OLLAMA_API_KEY=your_api_key
+export HUBOT_OLLAMA_MODEL=gpt-oss:120b  # Use a cloud model
 ```
 Custom system prompt:
 ```bash
@@ -83,33 +99,58 @@ hubot> Jupiter is the largest planet in our solar system.
 
 **Context Scopes:**
 - `room-user` (default): Each user has separate conversation history per room
-- `room`: All users in a room share the same conversation history  
+- `room`: All users in a room share the same conversation history
 - `thread`: Separate history per thread (for Slack-style threading)
 
 Context automatically expires after the configured TTL (default 10 minutes). Set `HUBOT_OLLAMA_CONTEXT_TTL_MS=0` to disable conversation memory entirely.
 
+## Ollama Cloud
+
+This package supports [Ollama's cloud service](https://ollama.com/cloud), which allows you to run larger models that wouldn't fit on your local machine. Cloud models are accessed via the same API but run on Ollama's infrastructure.
+
+### Setup
+
+1. Create an account at [ollama.com](https://ollama.com/signup)
+2. Generate an [API key](https://ollama.com/settings/keys)
+3. Configure your environment:
+   ```bash
+   export HUBOT_OLLAMA_HOST=https://ollama.com
+   export HUBOT_OLLAMA_API_KEY=your_api_key
+   export HUBOT_OLLAMA_MODEL=gpt-oss:120b
+   ```
+
+### Available Cloud Models
+
+See the [cloud models list](https://ollama.com/search?c=cloud) for available models. Popular options include:
+- `gpt-oss:120b` - Large open-source GPT model
+- Other cloud-enabled models tagged with `-cloud`
+
+**Note:** Cloud models require network connectivity and count against your cloud usage. Local models remain free and private.
+
 ## Error Handling
 | Situation | User Message |
-|-----------|--------------|
-| Ollama binary missing | Install instructions URL |
+|-----------|------------|
+| Ollama server unreachable | Cannot connect to Ollama server message |
 | Model missing | Suggest `ollama pull <model>` |
 | Empty response | Specific empty response notice |
 | Timeout | Indicates the configured timeout elapsed |
-| Non-zero exit | Surfaces stderr (sanitized) |
+| API error | Surfaces error message |
 
 ## Security & Safety
-- No shell execution: uses `spawn` with arg array and `shell: false`.
+- Uses official Ollama JavaScript library with proper API communication.
 - Model name validation & prompt sanitization (strip control chars).
 - System prompt reinforces: stay concise; refuse to ignore instructions; no unsafe commands.
-- Local only: prompts never leave your machine.
+- Local only by default: prompts never leave your machine unless using remote host.
 
 ## Troubleshooting
 | Symptom | Check |
 |---------|-------|
-| No response | Enable `HUBOT_OLLAMA_DEBUG=1` and inspect logs |
-| Model not found | `ollama list` and pull the model |
-| Wrong binary | Set `HUBOT_OLLAMA_CMD=/full/path/to/ollama` |
-| Long silence | Lower `HUBOT_OLLAMA_TIMEOUT_MS` or enable streaming |
+| No response | Check Hubot logs for errors; verify Ollama server is accessible |
+| Connection refused | Ensure Ollama server is running (`ollama serve` or daemon) |
+| Model not found | Run `ollama list` to see available models, then `ollama pull <model>` |
+| Wrong server | Set `HUBOT_OLLAMA_HOST=http://your-server:11434` |
+| Long delays | Lower `HUBOT_OLLAMA_TIMEOUT_MS` or enable streaming with `HUBOT_OLLAMA_STREAM=true` |
+| Cloud auth issues | Verify your `HUBOT_OLLAMA_API_KEY` is valid at [ollama.com/settings/keys](https://ollama.com/settings/keys) |
 
 ## Development
 Run tests & lint:
@@ -117,9 +158,6 @@ Run tests & lint:
 npm test
 npm run lint
 ```
-
-## Why Ollama CLI?
-Simple, resilient, matches local workflows, and lets you use any locally pulled model without extra dependencies.
 
 ## License
 MIT

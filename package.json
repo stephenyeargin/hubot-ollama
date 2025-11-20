@@ -59,5 +59,8 @@
   },
   "volta": {
     "node": "24.10.0"
+  },
+  "dependencies": {
+    "ollama": "^0.6.3"
   }
 }
