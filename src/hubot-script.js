@@ -3,9 +3,12 @@
 //
 // Configuration:
 //   HUBOT_OLLAMA_MODEL - The Ollama model to use (default: llama3.2)
+//   HUBOT_OLLAMA_HOST - Ollama server host (default: http://127.0.0.1:11434)
+//   HUBOT_OLLAMA_API_KEY - API key for Ollama cloud (optional, for use with https://ollama.com)
 //   HUBOT_OLLAMA_SYSTEM_PROMPT - Custom system prompt (optional)
 //   HUBOT_OLLAMA_MAX_PROMPT_CHARS - Max user prompt length before truncation (default: 2000)
-//   HUBOT_OLLAMA_TIMEOUT_MS - Max time in ms before killing Ollama process (default: 60000)
+//   HUBOT_OLLAMA_TIMEOUT_MS - Max time in ms before aborting request (default: 60000)
+//   HUBOT_OLLAMA_STREAM - Enable streaming responses: true/false/1/0 (default: false)
 //   HUBOT_OLLAMA_CONTEXT_TTL_MS - Time in ms to maintain conversation context (default: 600000 / 10 minutes, set to 0 to disable)
 //   HUBOT_OLLAMA_CONTEXT_TURNS - Number of recent turns to keep in context (default: 5)
 //   HUBOT_OLLAMA_CONTEXT_SCOPE - Scope for conversation context: 'room-user' (default), 'room', or 'thread'
@@ -14,9 +17,7 @@
 //   hubot ask <prompt> - Ask Ollama a question
 //
 
-const { spawn } = require('child_process');
-const fs = require('fs');
-const path = require('path');
+const { Ollama } = require('ollama');
 
 module.exports = (robot) => {
   const DEFAULT_MODEL = 'llama3.2';
@@ -33,6 +34,21 @@ module.exports = (robot) => {
   const CONTEXT_TURNS = Math.max(1, Number.parseInt(process.env.HUBOT_OLLAMA_CONTEXT_TURNS || '5', 10));
   const RAW_SCOPE = (process.env.HUBOT_OLLAMA_CONTEXT_SCOPE || 'room-user').toLowerCase();
   const CONTEXT_SCOPE = (['room', 'room-user', 'thread'].includes(RAW_SCOPE)) ? RAW_SCOPE : 'room-user';
+  const STREAM_ENABLED = /^1|true|yes$/i.test(process.env.HUBOT_OLLAMA_STREAM || '');
+
+  // Initialize Ollama client
+  const ollamaConfig = {
+    host: process.env.HUBOT_OLLAMA_HOST || 'http://127.0.0.1:11434'
+  };
+
+  // Add API key header if provided (for Ollama cloud)
+  if (process.env.HUBOT_OLLAMA_API_KEY) {
+    ollamaConfig.headers = {
+      Authorization: `Bearer ${process.env.HUBOT_OLLAMA_API_KEY}`
+    };
+  }
+
+  const ollama = new Ollama(ollamaConfig);
 
   // Initialize conversation context storage in robot.brain
   if (!robot.brain.get('ollamaContexts')) {
@@ -41,9 +57,6 @@ module.exports = (robot) => {
 
   // Sanitize user-provided text: strip control chars except tab/newline/carriage-return
   const sanitizeText = (text) => (text || '').replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
-
-  // Strip ANSI escape codes (color codes, etc.) from text
-  const stripAnsiCodes = (text) => (text || '').replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
 
   // Get conversation context key for a user in a room
   const getThreadId = (msg) => {
@@ -139,145 +152,84 @@ module.exports = (robot) => {
     robot.logger.debug(`Stored conversation turn for key=${contextKey} historyLen=${contexts[contextKey].history.length}`);
   };
 
-  // Resolve an absolute path to the ollama binary (env override or search PATH)
-  const resolveOllamaPath = () => {
-    if (process.env.HUBOT_OLLAMA_CMD) {
-      return process.env.HUBOT_OLLAMA_CMD;
-    }
-    const pathEnv = process.env.PATH || '';
-    const segments = pathEnv.split(path.delimiter);
-    for (const segment of segments) {
-      if (!segment) continue;
-      const candidate = path.join(segment, 'ollama');
-      try {
-        fs.accessSync(candidate, fs.constants.X_OK);
-        return candidate;
-      } catch (error) {
-        robot.logger.debug(error);
-      }
-    }
-    return 'ollama'; // fallback to relying on PATH
-  };
 
-  // Helper function to execute ollama command
-  const askOllama = (userPrompt, callback, msg, conversationHistory = []) => {
-    robot.logger.debug(`Calling Ollama with model: ${defaultModel}`);
 
-    // Construct the full prompt with system message and conversation history
-    let fullPrompt = defaultSystemPrompt;
+  // Helper function to execute ollama API call
+  const askOllama = async (userPrompt, msg, conversationHistory = []) => {
+    robot.logger.debug(`Calling Ollama API with model: ${defaultModel}`);
+
+    // Build messages array for chat API
+    const messages = [{ role: 'system', content: defaultSystemPrompt }];
 
     // Add conversation history if available
     if (conversationHistory.length > 0) {
-      fullPrompt += '\n\nRecent chat transcript (oldest first):';
+      robot.logger.debug(`Using conversation context with ${conversationHistory.length} previous turns`);
       for (const turn of conversationHistory) {
-        fullPrompt += `\nUser: ${turn.user}\nAssistant: ${turn.assistant}`;
+        messages.push({ role: 'user', content: turn.user });
+        messages.push({ role: 'assistant', content: turn.assistant });
       }
-      fullPrompt += '\n\nUse the transcript above to resolve pronouns and ellipsis in the next question.';
     }
 
     // Add current user prompt
-    fullPrompt += `\n\nUser: ${userPrompt}\nAssistant:`;
-    robot.logger.debug(`Assembled prompt with contextTurns=${conversationHistory.length} promptChars=${fullPrompt.length}`);
+    messages.push({ role: 'user', content: userPrompt });
+    robot.logger.debug(`Assembled ${messages.length} messages for chat API`);
 
-    // Spawn ollama process
-    const ollamaPath = resolveOllamaPath();
-    robot.logger.debug(`Resolved ollama binary path: ${ollamaPath}`);
-    const ollama = spawn(ollamaPath, ['run', '--nowordwrap', defaultModel, fullPrompt], {
-      shell: false,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'] // ignore stdin, pipe stdout/stderr
-    });
-    const STREAM_ENABLED = /^1|true|yes$/i.test(process.env.HUBOT_OLLAMA_STREAM || '');
+    // Set up abort controller for timeout
+    const abortController = new AbortController();
+    const timeout = setTimeout(() => abortController.abort(), TIMEOUT_MS);
 
-    let output = '';
-    let errorOutput = '';
-    let isModelInstalling = false;
+    try {
+      const response = await ollama.chat({
+        model: defaultModel,
+        messages,
+        stream: STREAM_ENABLED
+      });
 
-    // Collect stdout
-    ollama.stdout.on('data', (data) => {
-      const chunk = stripAnsiCodes(data.toString());
-      output += chunk;
-      robot.logger.debug(`Ollama stdout chunk (${chunk.length} chars)`);
+      clearTimeout(timeout);
+
       if (STREAM_ENABLED) {
-        const trimmed = chunk.trim();
-        if (trimmed) {
-          msg.send(trimmed);
+        // Handle streaming response
+        let fullResponse = '';
+        for await (const part of response) {
+          if (part.message && part.message.content) {
+            const content = part.message.content;
+            fullResponse += content;
+            msg.send(content);
+          }
         }
-      }
-    });
-
-    // Spinner detection to reduce noisy stderr logs
-    const SPINNER_REGEX = /^[\u2800-\u28FF\s]+$/; // braille range often used by spinners
-    const SPINNER_FRAMES = new Set(['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏']);
-    const isSpinnerFrame = (text) => {
-      const t = (text || '').replace(/[\r\n]/g, '').trim();
-      if (!t) return true; // empty after trim is noise
-      if (t.length === 1 && SPINNER_FRAMES.has(t)) return true;
-      // pure spinner/braille noise
-      return SPINNER_REGEX.test(t);
-    };
-
-    // Collect stderr
-    ollama.stderr.on('data', (data) => {
-      const chunk = stripAnsiCodes(data.toString());
-      // Check if this is model installation output
-      if (/pulling|downloading|verifying|success/i.test(chunk)) {
-        isModelInstalling = true;
-      }
-      const trimmed = chunk.trim();
-      // Avoid logging spinner frames and empty lines; also avoid storing them
-      if (trimmed && !isSpinnerFrame(trimmed)) {
-        errorOutput += chunk;
-        robot.logger.debug(`Ollama stderr chunk (${chunk.length} chars): ${trimmed.slice(0,200)}`);
-      }
-    });
-
-    // Kill long-running processes
-    let timedOut = false;
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      try {
-        if (ollama && typeof ollama.kill === 'function') {
-          ollama.kill('SIGKILL');
+        return fullResponse;
+      } else {
+        // Handle non-streaming response
+        if (response.message && response.message.content) {
+          return response.message.content;
         }
-      } catch (e) {
-        robot.logger.error('Failed to kill Ollama process on timeout', e);
+        throw new Error('No content in response');
       }
-    }, TIMEOUT_MS);
-
-    // Handle process completion
-    ollama.on('close', (code) => {
+    } catch (error) {
       clearTimeout(timeout);
-      if (timedOut) {
-        callback(new Error(`Ollama timed out after ${TIMEOUT_MS} ms`), null);
-        return;
-      }
-      if (code !== 0) {
-        robot.logger.error(`Ollama process exited with code ${code}`);
-        // Don't show installation output as errors
-        if (isModelInstalling) {
-          callback(new Error(`The model '${defaultModel}' is being installed. Please try again in a moment.`), null);
-        } else {
-          callback(new Error(`Ollama error: ${errorOutput || 'Unknown error'}`), null);
-        }
-        return;
+
+      // Handle specific error cases
+      if (error.name === 'AbortError') {
+        throw new Error(`Ollama timed out after ${TIMEOUT_MS} ms`);
       }
 
-      robot.logger.debug(`Ollama process closed code=${code} stdoutLen=${output.length} stderrLen=${errorOutput.length}`);
-      callback(null, output.trim());
-    });
+      // Check for connection errors
+      if (error.code === 'ECONNREFUSED') {
+        throw new Error('Cannot connect to Ollama server. Please ensure Ollama is running.');
+      }
 
-    // Handle process errors (e.g., command not found)
-    ollama.on('error', (err) => {
-      // Ensure timeout is cleared if spawn fails immediately so we don't later report a timeout
-      clearTimeout(timeout);
-      robot.logger.error('Failed to start Ollama process', err);
-      callback(err, null);
-    });
+      // Check for model not found
+      if (error.message && error.message.includes('not found')) {
+        throw new Error(`The model '${defaultModel}' was not found. You may need to run \`ollama pull ${defaultModel}\` first.`);
+      }
+
+      // Re-throw other errors
+      throw error;
+    }
   };
 
   // Main command handler
-  robot.respond(/(?:ask|ollama|llm)\s+(.+)/i, (msg) => {
+  robot.respond(/(?:ask|ollama|llm)\s+(.+)/i, async (msg) => {
     let userPrompt = msg.match[1];
 
     if (!userPrompt || userPrompt.trim() === '') {
@@ -297,24 +249,11 @@ module.exports = (robot) => {
 
     // Get conversation history for this user/room
     const conversationHistory = getConversationHistory(msg);
-    if (conversationHistory.length > 0) {
-      robot.logger.debug(`Using conversation context with ${conversationHistory.length} previous turns`);
-    }
 
-    askOllama(userPrompt, (err, response) => {
-      if (err) {
-        // Handle specific error cases
-        if (err.code === 'ENOENT') {
-          msg.send('Error: The `ollama` command is not available. Please install Ollama from https://ollama.ai/');
-        } else if (err.message && err.message.includes('not found')) {
-          msg.send(`Error: The model '${defaultModel}' was not found. You may need to run \`ollama pull ${defaultModel}\` first.`);
-        } else {
-          msg.send(`Error: ${err.message || 'An unexpected error occurred while communicating with Ollama.'}`);
-        }
-        return;
-      }
+    try {
+      const response = await askOllama(userPrompt, msg, conversationHistory);
 
-      if (!response) {
+      if (!response || !response.trim()) {
         msg.send('Error: Ollama returned an empty response.');
         return;
       }
@@ -325,7 +264,13 @@ module.exports = (robot) => {
       if (wasTruncated) {
         msg.send(`Note: Your prompt exceeded ${MAX_PROMPT_CHARS} characters and was truncated.`);
       }
-      msg.send(response);
-    }, msg, conversationHistory);
+
+      // Only send response if not streaming (streaming already sent chunks)
+      if (!STREAM_ENABLED) {
+        msg.send(response);
+      }
+    } catch (err) {
+      msg.send(`Error: ${err.message || 'An unexpected error occurred while communicating with Ollama.'}`);
+    }
   });
 };
