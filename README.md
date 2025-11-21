@@ -112,7 +112,8 @@ This package supports [Ollama's cloud service](https://ollama.com/cloud), which 
 
 1. Create an account at [ollama.com](https://ollama.com/signup)
 2. Generate an [API key](https://ollama.com/settings/keys)
-3. Configure your environment:
+3. Run `ollama signin` to register the host with Ollama.com
+4. Configure your environment:
    ```bash
    export HUBOT_OLLAMA_HOST=https://ollama.com
    export HUBOT_OLLAMA_API_KEY=your_api_key
@@ -150,7 +151,8 @@ See the [cloud models list](https://ollama.com/search?c=cloud) for available mod
 | Model not found | Run `ollama list` to see available models, then `ollama pull <model>` |
 | Wrong server | Set `HUBOT_OLLAMA_HOST=http://your-server:11434` |
 | Long delays | Lower `HUBOT_OLLAMA_TIMEOUT_MS` or enable streaming with `HUBOT_OLLAMA_STREAM=true` |
-| Cloud auth issues | Verify your `HUBOT_OLLAMA_API_KEY` is valid at [ollama.com/settings/keys](https://ollama.com/settings/keys) |
+| `Error: unauthorized` | If using a cloud model, you must run `ollama signin` to register the host |
+| Other cloud auth issues | Verify your `HUBOT_OLLAMA_API_KEY` is valid at [ollama.com/settings/keys](https://ollama.com/settings/keys) |
 
 ## Development
 Run tests & lint:
