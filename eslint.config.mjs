@@ -37,8 +37,11 @@ export default [
   // Environments and parser options
   {
     languageOptions: {
-      ecmaVersion: 'latest',
+      ecmaVersion: 2024,
       sourceType: 'commonjs', // CommonJS project
+      parserOptions: {
+        ecmaVersion: 2024,
+      },
       globals: {
         ...globals.node,
         ...globals.jest,

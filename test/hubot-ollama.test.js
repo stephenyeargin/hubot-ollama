@@ -1,7 +1,7 @@
 const Helper = require('hubot-test-helper');
 const nock = require('nock');
 
-const helper = new Helper('./../src/hubot-script.js');
+const helper = new Helper('./../src/hubot-ollama.js');
 
 describe('hubot-ollama', () => {
   let room = null;
