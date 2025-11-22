@@ -152,7 +152,17 @@ module.exports = (robot) => {
     robot.logger.debug(`Stored conversation turn for key=${contextKey} historyLen=${contexts[contextKey].history.length}`);
   };
 
-
+  const formatResponse = (response) => {
+    // Slack envelope
+    const adapterName = robot.adapterName ?? robot.adapter?.name;
+    if (/slack/.test(adapterName)) {
+      return {
+        text: response,
+        mrkdwn: true,
+      }
+    }
+    return response;
+  }
 
   // Helper function to execute ollama API call
   const askOllama = async (userPrompt, msg, conversationHistory = []) => {
@@ -267,7 +277,7 @@ module.exports = (robot) => {
 
       // Only send response if not streaming (streaming already sent chunks)
       if (!STREAM_ENABLED) {
-        msg.send(response);
+        msg.send(formatResponse(response));
       }
     } catch (err) {
       msg.send(`Error: ${err.message || 'An unexpected error occurred while communicating with Ollama.'}`);
