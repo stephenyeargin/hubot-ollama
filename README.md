@@ -48,6 +48,11 @@ Prompts are sanitized and truncated if they exceed the configured limit.
 | `HUBOT_OLLAMA_CONTEXT_TTL_MS` | Optional | `600000` (10 min) | Time to maintain conversation history; `0` to disable |
 | `HUBOT_OLLAMA_CONTEXT_TURNS` | Optional | `5` | Maximum number of conversation turns to remember |
 | `HUBOT_OLLAMA_CONTEXT_SCOPE` | Optional | `room-user` | Context isolation: `room-user`, `room`, or `thread` |
+| `HUBOT_OLLAMA_WEB_ENABLED` | Optional | `false` | Enable web-assisted workflow that can search/fetch context |
+| `HUBOT_OLLAMA_WEB_MAX_RESULTS` | Optional | `5` | Max search results to use (capped at 10) |
+| `HUBOT_OLLAMA_WEB_FETCH_CONCURRENCY` | Optional | `3` | Parallel fetch concurrency |
+| `HUBOT_OLLAMA_WEB_MAX_BYTES` | Optional | `120000` | Max bytes per fetched page used in context |
+| `HUBOT_OLLAMA_WEB_TIMEOUT_MS` | Optional | `45000` | Timeout for the web phase per fetch |
 
 Change model:
 ```bash
@@ -84,6 +89,22 @@ export HUBOT_OLLAMA_CONTEXT_SCOPE=room
 hubot ask explain vector embeddings
 hubot llm generate a short motivational quote
 hubot ollama compare sql vs nosql
+```
+
+### Web-Enabled Workflow
+When `HUBOT_OLLAMA_WEB_ENABLED=true` and the connected Ollama host supports web tools, the bot will:
+- Ask the model if a web search is necessary (recency/specificity check).
+- If needed: generate concise search terms, perform `webSearch`, fetch top results in parallel, synthesize a compact context block, and include it before the final analysis.
+- Send a status message indicating the search step.
+- Save fetched context to conversation history to avoid re-fetching next turn.
+
+Enable:
+```bash
+export HUBOT_OLLAMA_WEB_ENABLED=true
+export HUBOT_OLLAMA_WEB_MAX_RESULTS=5
+export HUBOT_OLLAMA_WEB_FETCH_CONCURRENCY=3
+export HUBOT_OLLAMA_WEB_MAX_BYTES=120000
+export HUBOT_OLLAMA_WEB_TIMEOUT_MS=45000
 ```
 
 ### Conversation Context
@@ -151,6 +172,8 @@ See the [cloud models list](https://ollama.com/search?c=cloud) for available mod
 | Model not found | Run `ollama list` to see available models, then `ollama pull <model>` |
 | Wrong server | Set `HUBOT_OLLAMA_HOST=http://your-server:11434` |
 | Long delays | Lower `HUBOT_OLLAMA_TIMEOUT_MS` or enable streaming with `HUBOT_OLLAMA_STREAM=true` |
+| Web tools not running | The connected Ollama host must support `webSearch`/`webFetch`; feature auto-skips when unavailable |
+| No search performed | The model decided a web search was unnecessary; disable web workflow or ask explicitly |
 | `Error: unauthorized` | If using a cloud model, you must run `ollama signin` to register the host |
 | Other cloud auth issues | Verify your `HUBOT_OLLAMA_API_KEY` is valid at [ollama.com/settings/keys](https://ollama.com/settings/keys) |
 

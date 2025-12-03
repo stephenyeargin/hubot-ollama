@@ -12,6 +12,11 @@
 //   HUBOT_OLLAMA_CONTEXT_TTL_MS - Time in ms to maintain conversation context (default: 600000 / 10 minutes, set to 0 to disable)
 //   HUBOT_OLLAMA_CONTEXT_TURNS - Number of recent turns to keep in context (default: 5)
 //   HUBOT_OLLAMA_CONTEXT_SCOPE - Scope for conversation context: 'room-user' (default), 'room', or 'thread'
+//   HUBOT_OLLAMA_WEB_ENABLED - Enable web-assisted workflow (default: false)
+//   HUBOT_OLLAMA_WEB_MAX_RESULTS - Max webSearch results to use (default: 5, max capped at 10)
+//   HUBOT_OLLAMA_WEB_FETCH_CONCURRENCY - Parallel fetch concurrency (default: 3)
+//   HUBOT_OLLAMA_WEB_MAX_BYTES - Max bytes of fetched content per page (default: 120000)
+//   HUBOT_OLLAMA_WEB_TIMEOUT_MS - Overall timeout for web phase (default: 45000)
 //
 // Commands:
 //   hubot ask <prompt> - Ask Ollama a question
@@ -22,8 +27,8 @@ const { Ollama } = require('ollama');
 module.exports = (robot) => {
   const DEFAULT_MODEL = 'llama3.2';
   const RAW_MODEL = process.env.HUBOT_OLLAMA_MODEL || DEFAULT_MODEL;
-  const MODEL_NAME_ALLOWED = /^[A-Za-z0-9._:-]+$/;
-  const defaultModel = MODEL_NAME_ALLOWED.test(RAW_MODEL) ? RAW_MODEL : DEFAULT_MODEL;
+  const MODEL_NAME_ALLOWED = /^[a-z0-9._:-]+$/i;
+  const selectedModel = MODEL_NAME_ALLOWED.test(RAW_MODEL) ? RAW_MODEL : DEFAULT_MODEL;
 
   const MAX_PROMPT_CHARS = Number.parseInt(process.env.HUBOT_OLLAMA_MAX_PROMPT_CHARS || '2000', 10);
   const TIMEOUT_MS = Number.parseInt(process.env.HUBOT_OLLAMA_TIMEOUT_MS || '60000', 10);
@@ -32,6 +37,12 @@ module.exports = (robot) => {
   const RAW_SCOPE = (process.env.HUBOT_OLLAMA_CONTEXT_SCOPE || 'room-user').toLowerCase();
   const CONTEXT_SCOPE = (['room', 'room-user', 'thread'].includes(RAW_SCOPE)) ? RAW_SCOPE : 'room-user';
   const STREAM_ENABLED = /^1|true|yes$/i.test(process.env.HUBOT_OLLAMA_STREAM || '');
+  const WEB_ENABLED = /^1|true|yes$/i.test(process.env.HUBOT_OLLAMA_WEB_ENABLED || '');
+  const HAS_WEB_API_KEY = Boolean(process.env.OLLAMA_API_KEY || process.env.HUBOT_OLLAMA_API_KEY);
+  const WEB_MAX_RESULTS = Math.min(10, Math.max(1, Number.parseInt(process.env.HUBOT_OLLAMA_WEB_MAX_RESULTS || '5', 10)));
+  const WEB_FETCH_CONCURRENCY = Math.max(1, Number.parseInt(process.env.HUBOT_OLLAMA_WEB_FETCH_CONCURRENCY || '3', 10));
+  const WEB_MAX_BYTES = Math.max(1024, Number.parseInt(process.env.HUBOT_OLLAMA_WEB_MAX_BYTES || '120000', 10));
+  const WEB_TIMEOUT_MS = Math.max(1000, Number.parseInt(process.env.HUBOT_OLLAMA_WEB_TIMEOUT_MS || '45000', 10));
 
   // For formatting instructions
   const adapterName = robot.adapterName ?? robot.adapter?.name;
@@ -85,6 +96,97 @@ module.exports = (robot) => {
 
   // Sanitize user-provided text: strip control chars except tab/newline/carriage-return
   const sanitizeText = (text) => (text || '').replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
+
+  const truncate = (s, max) => (s.length > max ? `${s.slice(0, max)}…` : s);
+
+  // Web tools are model-dependent. We'll probe and cache support per model
+  // and gracefully skip on errors (unsupported models/hosts).
+
+  // Probe if the selected model supports web tools via `ollama.show`
+  const probeModelWebSupport = async (modelName) => {
+    try {
+      // Prefer explicit capabilities from model metadata
+      const info = await ollama.show({ model: modelName });
+      // Expected structure includes a top-level `capabilities` array
+      const caps = Array.isArray(info && info.capabilities) ? info.capabilities : [];
+      const capList = caps.map(String);
+      const supportsTools = capList.some(c => /tools/i.test(c));
+      robot.logger.debug(`Web support (show) model=${modelName}: ${Boolean(supportsTools)} caps=${capList.join(',')}`);
+      return Boolean(supportsTools);
+    } catch (err) {
+      robot.logger.debug(`Web support probe failed for model=${modelName}: ${err && err.message}`);
+      return false;
+    }
+  };
+
+  // Generate concise search terms using the model
+  const generateSearchTerms = async (prompt) => {
+    const message = { role: 'user', content: `Generate 2-4 concise search terms (comma-separated) for: ${truncate(prompt, 300)}` };
+    const res = await ollama.chat({ model: selectedModel, messages: [message] });
+    const content = (res && res.message && res.message.content) || '';
+    const terms = content.split(/[,\n]/).map(t => t.trim()).filter(Boolean);
+    // Fallback to raw prompt if extraction fails
+    return terms.length ? terms.join(' ') : truncate(prompt, 256);
+  };
+
+  // Perform web search; returns deduped top results
+  const runWebSearch = async (query) => {
+    const searchRes = await ollama.webSearch({ query, max_results: WEB_MAX_RESULTS });
+    const items = (searchRes && searchRes.results) || [];
+    const seen = new Set();
+    const dedup = [];
+    for (const it of items) {
+      const url = it.url || it.link || it.href;
+      if (!url || seen.has(url)) continue;
+      seen.add(url);
+      dedup.push({ title: it.title || it.name || url, url, content: it.content || '' });
+    }
+    return dedup.slice(0, WEB_MAX_RESULTS);
+  };
+
+  // Fetch multiple pages in parallel with limited concurrency and truncation
+  const runWebFetchMany = async (urls) => {
+    const results = [];
+    let idx = 0;
+    const workers = Array(Math.min(WEB_FETCH_CONCURRENCY, urls.length)).fill(0).map(() => (async () => {
+      while (idx < urls.length) {
+        const i = idx++;
+        const entry = urls[i];
+        const u = entry.url;
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), WEB_TIMEOUT_MS);
+          const res = await ollama.webFetch({ url: u, signal: controller.signal });
+          clearTimeout(timeout);
+          let body = (res && (res.text || res.content || res.body || res.data)) || '';
+          if (!body && entry.content) {
+            // Fallback to search result snippet when fetch yields empty
+            body = entry.content;
+          }
+          results.push({ title: entry.title, url: u, text: truncate(body, WEB_MAX_BYTES) });
+        } catch (error) {
+          // Use search result snippet as fallback when available
+          if (entry && entry.content) {
+            results.push({ title: entry.title, url: u, text: truncate(entry.content, WEB_MAX_BYTES) });
+            robot.logger.debug(`Fetch failed for <${u}>; using search snippet fallback.`);
+          } else {
+            robot.logger.error({ message: `Fetch for <${u}> failed!`, error });
+          }
+        }
+      }
+    })());
+    await Promise.all(workers);
+    return results;
+  };
+
+  // Build a compact context block from fetched pages
+  const buildWebContextMessage = (pages) => {
+    const lines = [];
+    for (const p of pages) {
+      lines.push(`- ${p.title} (${p.url})\n${truncate(p.text || '', 800)}`);
+    }
+    return lines.join('\n\n');
+  };
 
   // Get conversation context key for a user in a room
   const getThreadId = (msg) => {
@@ -193,7 +295,7 @@ module.exports = (robot) => {
 
   // Helper function to execute ollama API call
   const askOllama = async (userPrompt, msg, conversationHistory = []) => {
-    robot.logger.debug(`Calling Ollama API with model: ${defaultModel}`);
+    robot.logger.debug(`Calling Ollama API with model: ${selectedModel}`);
 
     // Build messages array for chat API
     const messages = [{ role: 'system', content: buildSystemPrompt(msg) }];
@@ -207,8 +309,70 @@ module.exports = (robot) => {
       }
     }
 
+    // Potentially run web-enabled workflow to augment context
+    const finalUserPrompt = userPrompt;
+
+    robot.logger.debug(`Web flow config -> enabled=${WEB_ENABLED} apiKey=${HAS_WEB_API_KEY} maxResults=${WEB_MAX_RESULTS} concurrency=${WEB_FETCH_CONCURRENCY}`);
+
+    if (WEB_ENABLED && HAS_WEB_API_KEY) {
+      try {
+        // Probe model web support once and cache
+        const supportsWeb = await probeModelWebSupport(selectedModel);
+        if (!supportsWeb) {
+          robot.logger.debug(`Model ${selectedModel} does not support web tools; skipping web flow.`);
+        }
+
+        // Step 1: Ask model if web is necessary
+        const needRes = await ollama.chat({
+          model: selectedModel,
+          messages: [
+            { role: 'system', content: 'Decide if a web search is necessary to answer the user based on recency or specificity. Reply with ONLY "YES" or "NO".' },
+            { role: 'user', content: truncate(userPrompt, 600) },
+          ],
+        });
+        const needContent = (needRes && needRes.message && needRes.message.content || '').trim().toUpperCase();
+        const needsWeb = /YES/.test(needContent);
+        robot.logger.debug(`Web-enabled decision: needsWeb=${needsWeb} model=${selectedModel}`);
+
+        if (needsWeb && supportsWeb) {
+          msg.send('Searching for relevant sources...');
+          // Step 2: Generate search terms
+          const terms = await generateSearchTerms(userPrompt);
+          robot.logger.debug(`Search terms: ${terms}`);
+          // Step 3: Run webSearch
+          let results = [];
+          try {
+            results = await runWebSearch(terms);
+          } catch (err) {
+            robot.logger.debug(`webSearch failed: ${err && err.message}`);
+          }
+          robot.logger.debug(`webSearch results=${results.length}`);
+          if (results.length) {
+            // Step 4: Fetch a subset in parallel
+            let pages = [];
+            try {
+              pages = await runWebFetchMany(results);
+            } catch (err) {
+              robot.logger.debug(`webFetch failed: ${err && err.message}`);
+            }
+            robot.logger.debug(`Fetched pages count=${pages.length}`);
+            if (pages.length) {
+              // Step 5: Synthesize context and add as assistant message
+              const contextText = buildWebContextMessage(pages);
+              messages.push({ role: 'assistant', content: `Web context synthesized from recent sources:\n\n${contextText}` });
+              // Store fetched context in conversation so future turns can reuse
+              storeConversationTurn(msg, `WEB_CONTEXT(${terms})`, contextText);
+            }
+          }
+        }
+      } catch (e) {
+        robot.logger.debug(`Web-enabled flow error: ${e && e.message}`);
+        // Gracefully continue without web context
+      }
+    }
+
     // Add current user prompt
-    messages.push({ role: 'user', content: userPrompt });
+    messages.push({ role: 'user', content: finalUserPrompt });
     robot.logger.debug(`Assembled ${messages.length} messages for chat API`);
 
     // Set up abort controller for timeout
@@ -217,7 +381,7 @@ module.exports = (robot) => {
 
     try {
       const response = await ollama.chat({
-        model: defaultModel,
+        model: selectedModel,
         messages,
         stream: STREAM_ENABLED
       });
@@ -257,7 +421,7 @@ module.exports = (robot) => {
 
       // Check for model not found
       if (error.message && error.message.includes('not found')) {
-        throw new Error(`The model '${defaultModel}' was not found. You may need to run \`ollama pull ${defaultModel}\` first.`);
+        throw new Error(`The model '${selectedModel}' was not found. You may need to run \`ollama pull ${selectedModel}\` first.`);
       }
 
       // Re-throw other errors
