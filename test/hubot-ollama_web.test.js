@@ -5,6 +5,9 @@ const Helper = require('hubot-test-helper');
 jest.mock('ollama', () => {
   class MockOllama {
     constructor() {}
+    async show({ }) {
+      return { capabilities: ['tools'] };
+    }
     async chat(req) {
       const last = req.messages[req.messages.length - 1];
       // Decision prompt: reply YES to trigger web flow
@@ -22,12 +25,15 @@ jest.mock('ollama', () => {
     async webSearch({ max_results }) {
       return {
         results: [
-          { title: 'Node v24.10.0', url: 'https://nodejs.org/en/blog/release/v24.10.0' },
-          { title: 'Changelog', url: 'https://example.com/changelog' },
+          { title: 'Node v24.10.0', url: 'https://nodejs.org/en/blog/release/v24.10.0', content: 'Node release notes snippet' },
+          { title: 'Changelog', url: 'https://example.com/changelog', content: 'Project changelog summary' },
         ].slice(0, max_results || 5)
       };
     }
     async webFetch({ url }) {
+      if (/example.com\/changelog/.test(url)) {
+        throw new Error('Network error');
+      }
       return { text: `Content for ${url}` };
     }
   }
@@ -41,6 +47,7 @@ describe('hubot-ollama web-enabled flow', () => {
 
   beforeEach(() => {
     process.env.HUBOT_OLLAMA_WEB_ENABLED = 'true';
+    process.env.HUBOT_OLLAMA_API_KEY = 'test-key';
     room = helper.createRoom();
     // Mock robot.logger to avoid noisy output and allow call checks if needed
     ['debug', 'info', 'warning', 'error'].forEach((method) => {
@@ -51,6 +58,7 @@ describe('hubot-ollama web-enabled flow', () => {
   afterEach(() => {
     room.destroy();
     delete process.env.HUBOT_OLLAMA_WEB_ENABLED;
+    delete process.env.HUBOT_OLLAMA_API_KEY;
   });
 
   it('runs web flow when model says YES and includes context', async () => {
