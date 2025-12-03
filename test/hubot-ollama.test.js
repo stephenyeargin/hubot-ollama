@@ -235,6 +235,29 @@ describe('hubot-ollama', () => {
   });
 
   describe('Configuration', () => {
+    describe("system prompt includes user's and bot's names by default", () => {
+      beforeEach((done) => {
+        // Ensure no custom system prompt overrides
+        delete process.env.HUBOT_OLLAMA_SYSTEM_PROMPT;
+
+        nock(OLLAMA_HOST)
+          .post('/api/chat', (body) => {
+            const systemMsg = body.messages.find(m => m.role === 'system');
+            return systemMsg && systemMsg.content.includes("User's Name: alice | Bot's Name: hubot");
+          })
+          .reply(200, {
+            message: { role: 'assistant', content: 'ok' },
+            done: true
+          });
+
+        room.user.say('alice', 'hubot ask test');
+        setTimeout(done, 150);
+      });
+
+      it("adds user's and bot's names to system prompt when not overridden", () => {
+        expect(nock.isDone()).toBe(true);
+      });
+    });
     describe('custom model', () => {
       beforeEach((done) => {
         // Need to recreate the room with the new env var
@@ -305,7 +328,13 @@ describe('hubot-ollama', () => {
           .post('/api/chat', (body) => {
             // Check that system message is in messages array
             const systemMsg = body.messages.find(m => m.role === 'system');
-            return systemMsg && systemMsg.content === 'You are a helpful assistant. Be concise.';
+            // Should include base facts (timestamp text and names), but NOT the default instructions,
+            // and SHOULD include the custom instructions.
+            return systemMsg &&
+              systemMsg.content.includes('Current UTC timestamp:') &&
+              systemMsg.content.includes("User's Name: alice | Bot's Name: hubot") &&
+              !systemMsg.content.includes('You are a helpful chatbot for IRC/Slack-style chats') &&
+              systemMsg.content.includes('You are a helpful assistant. Be concise.');
           })
           .reply(200, {
             message: { role: 'assistant', content: 'ok' },
@@ -316,7 +345,7 @@ describe('hubot-ollama', () => {
         setTimeout(done, 150);
       });
 
-      it('uses custom system prompt in the request', () => {
+      it('replaces default instructions with custom after base facts', () => {
         expect(nock.isDone()).toBe(true);
       });
     });
