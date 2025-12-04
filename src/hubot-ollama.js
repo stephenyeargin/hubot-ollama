@@ -11,7 +11,7 @@
 //   HUBOT_OLLAMA_STREAM - Enable streaming responses: true/false/1/0 (default: false)
 //   HUBOT_OLLAMA_CONTEXT_TTL_MS - Time in ms to maintain conversation context (default: 600000 / 10 minutes, set to 0 to disable)
 //   HUBOT_OLLAMA_CONTEXT_TURNS - Number of recent turns to keep in context (default: 5)
-//   HUBOT_OLLAMA_CONTEXT_SCOPE - Scope for conversation context: 'room-user' (default), 'room', or 'thread'
+//   HUBOT_OLLAMA_CONTEXT_SCOPE - Scope for conversation context: 'room-user' (default), 'room', or 'thread'. When set to 'thread', replies are always sent to threads.
 //   HUBOT_OLLAMA_WEB_ENABLED - Enable web-assisted workflow (default: false)
 //   HUBOT_OLLAMA_WEB_MAX_RESULTS - Max webSearch results to use (default: 5, max capped at 10)
 //   HUBOT_OLLAMA_WEB_FETCH_CONCURRENCY - Parallel fetch concurrency (default: 3)
@@ -172,7 +172,7 @@ Evaluate the following prompt:`;
     const content = ((res && res.message && res.message.content) || '').trim();
 
     // Check if response is NO (case-insensitive)
-    if (/^NO$/i.test(content)) {
+    if (/^\s*no\s*$/i.test(content)) {
       return { needsWeb: false, keywords: null };
     }
 
@@ -252,8 +252,36 @@ Evaluate the following prompt:`;
     );
   };
 
+  // Extract user information from message, with fallback options
+  const getUserInfo = (msg) => {
+    if (!msg || !msg.message || !msg.message.user) {
+      return {
+        id: 'unknown-user',
+        name: 'unknown-user',
+        realName: 'unknown-user',
+        displayName: 'unknown-user'
+      };
+    }
+
+    const user = msg.message.user;
+    const userId = user.id || user.name || 'unknown-user';
+    const userName = user.name || userId;
+    const realName = user.real_name || userName;
+
+    // Format display name: "Real Name (@username)" for readability
+    // Falls back to just username/id if real name isn't available
+    const displayName = realName !== userName ? `${realName} (@${userName})` : `@${userName}`;
+
+    return {
+      id: userId,
+      name: userName,
+      realName,
+      displayName
+    };
+  };
+
   const getContextKey = (msg) => {
-    const userId = (msg && msg.message && (msg.message.user.id || msg.message.user.name)) || 'unknown-user';
+    const userInfo = getUserInfo(msg);
     const roomId = (msg && msg.message && msg.message.room) || 'direct';
     let key;
     if (CONTEXT_SCOPE === 'thread') {
@@ -267,7 +295,7 @@ Evaluate the following prompt:`;
     } else if (CONTEXT_SCOPE === 'room') {
       key = `${roomId}`;
     } else {
-      key = `${roomId}:${userId}`;
+      key = `${roomId}:${userInfo.id}`;
     }
     robot.logger.debug(`Conversation context key=${key} scope=${CONTEXT_SCOPE}`);
     return key;
@@ -310,6 +338,7 @@ Evaluate the following prompt:`;
 
     const contexts = robot.brain.get('ollamaContexts') || {};
     const contextKey = getContextKey(msg);
+    const userInfo = getUserInfo(msg);
 
     if (!contexts[contextKey]) {
       contexts[contextKey] = {
@@ -318,9 +347,16 @@ Evaluate the following prompt:`;
       };
     }
 
+    // Store user info along with each turn for multi-user contexts
     contexts[contextKey].history.push({
       user: userPrompt,
-      assistant: assistantResponse
+      assistant: assistantResponse,
+      // Store user metadata for room-scope contexts
+      ...(CONTEXT_SCOPE === 'room' && {
+        userId: userInfo.id,
+        userName: userInfo.name,
+        userDisplayName: userInfo.displayName
+      })
     });
 
     // Keep only the last N turns to prevent context from growing too large
@@ -330,16 +366,26 @@ Evaluate the following prompt:`;
 
     contexts[contextKey].lastUpdated = Date.now();
     robot.brain.set('ollamaContexts', contexts);
-    robot.logger.debug(`Stored conversation turn for key=${contextKey} historyLen=${contexts[contextKey].history.length}`);
+    robot.logger.debug(`Stored conversation turn for key=${contextKey} historyLen=${contexts[contextKey].history.length} scope=${CONTEXT_SCOPE}`);
   };
 
-  const formatResponse = (response) => {
+  const formatResponse = (response, msg) => {
     // Slack envelope
     if (/slack/.test(adapterName)) {
-      return {
+      const formatted = {
         text: response,
         mrkdwn: true,
+      };
+
+      // If CONTEXT_SCOPE is 'thread' and message is in a thread, reply in the thread
+      if (CONTEXT_SCOPE === 'thread' && msg && msg.message) {
+        const threadId = getThreadId(msg);
+        if (threadId) {
+          formatted.thread_ts = threadId;
+        }
       }
+
+      return formatted;
     }
     return response;
   }
@@ -355,7 +401,12 @@ Evaluate the following prompt:`;
     if (conversationHistory.length > 0) {
       robot.logger.debug(`Using conversation context with ${conversationHistory.length} previous turns`);
       for (const turn of conversationHistory) {
-        messages.push({ role: 'user', content: turn.user });
+        // For room-scope contexts, prefix user message with the user's display name
+        let userContent = turn.user;
+        if (CONTEXT_SCOPE === 'room' && turn.userDisplayName) {
+          userContent = `${turn.userDisplayName}: ${turn.user}`;
+        }
+        messages.push({ role: 'user', content: userContent });
         messages.push({ role: 'assistant', content: turn.assistant });
       }
     }
@@ -374,11 +425,15 @@ Evaluate the following prompt:`;
         }
 
         // Evaluate web search need and get keywords in one call
-        const webEval = await evaluateWebSearchNeed(userPrompt);
+        let webEval = { needsWeb: false };
+        if (supportsWeb) {
+          webEval = await evaluateWebSearchNeed(userPrompt);
+        }
+
         robot.logger.debug(`Web-enabled decision: needsWeb=${webEval.needsWeb} model=${selectedModel}`);
 
         if (webEval.needsWeb && supportsWeb) {
-          msg.send('Searching for relevant sources...');
+          msg.send(formatResponse('Searching for relevant sources...', msg));
           const terms = webEval.keywords;
           robot.logger.debug(`Search keywords: ${terms}`);
           let results = [];
@@ -399,9 +454,10 @@ Evaluate the following prompt:`;
             if (pages.length) {
               // Synthesize context and add as assistant message
               const contextText = buildWebContextMessage(pages);
-              messages.push({ role: 'assistant', content: `Web context synthesized from recent sources:\n\n${contextText}` });
-              // Store fetched context in conversation so future turns can reuse
-              storeConversationTurn(msg, `WEB_CONTEXT(${terms})`, contextText);
+              messages.push({
+                role: 'system',
+                content: `Relevant web context:\n\n${contextText}`
+              });
             }
           }
         }
@@ -435,7 +491,7 @@ Evaluate the following prompt:`;
           if (part.message && part.message.content) {
             const content = part.message.content;
             fullResponse += content;
-            msg.send(content);
+            msg.send(formatResponse(content, msg));
           }
         }
         return fullResponse;
@@ -469,49 +525,52 @@ Evaluate the following prompt:`;
     }
   };
 
-  // Main command handler
-  robot.respond(/(?:ask|ollama|llm)\s+(.+)/i, async (msg) => {
-    let userPrompt = msg.match[1];
-
+  // Shared handler for processing prompts from any source
+  const handlePrompt = async (userPrompt, msg) => {
     if (!userPrompt || userPrompt.trim() === '') {
-      msg.send('Please provide a question or prompt.');
+      msg.send(formatResponse('Please provide a question or prompt.', msg));
       return;
     }
 
     // Sanitize and enforce prompt length limit
-    userPrompt = sanitizeText(userPrompt);
+    let sanitizedPrompt = sanitizeText(userPrompt);
     let wasTruncated = false;
-    if (userPrompt.length > MAX_PROMPT_CHARS) {
-      userPrompt = `${userPrompt.slice(0, MAX_PROMPT_CHARS)}…`;
+    if (sanitizedPrompt.length > MAX_PROMPT_CHARS) {
+      sanitizedPrompt = `${sanitizedPrompt.slice(0, MAX_PROMPT_CHARS)}…`;
       wasTruncated = true;
     }
-
-    robot.logger.debug(`User prompt: ${userPrompt}`);
 
     // Get conversation history for this user/room
     const conversationHistory = getConversationHistory(msg);
 
     try {
-      const response = await askOllama(userPrompt, msg, conversationHistory);
+      const response = await askOllama(sanitizedPrompt, msg, conversationHistory);
 
       if (!response || !response.trim()) {
-        msg.send('Error: Ollama returned an empty response.');
+        msg.send(formatResponse('Error: Ollama returned an empty response.', msg));
         return;
       }
 
       // Store this conversation turn for future context
-      storeConversationTurn(msg, userPrompt, response);
+      storeConversationTurn(msg, sanitizedPrompt, response);
 
       if (wasTruncated) {
-        msg.send(`Note: Your prompt exceeded ${MAX_PROMPT_CHARS} characters and was truncated.`);
+        msg.send(formatResponse(`Note: Your prompt exceeded ${MAX_PROMPT_CHARS} characters and was truncated.`, msg));
       }
 
       // Only send response if not streaming (streaming already sent chunks)
       if (!STREAM_ENABLED) {
-        msg.send(formatResponse(response));
+        msg.send(formatResponse(response, msg));
       }
     } catch (err) {
-      msg.send(`Error: ${err.message || 'An unexpected error occurred while communicating with Ollama.'}`);
+      msg.send(formatResponse(`Error: ${err.message || 'An unexpected error occurred while communicating with Ollama.'}`, msg));
     }
+  };
+
+  // Main command handler
+  robot.respond(/(?:ask|ollama|llm)\s+(.+)/i, async (msg) => {
+    const userPrompt = msg.match[1];
+    robot.logger.debug(`User prompt: ${userPrompt}`);
+    await handlePrompt(userPrompt, msg);
   });
 };
