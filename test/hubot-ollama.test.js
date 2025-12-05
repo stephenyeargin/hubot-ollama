@@ -115,10 +115,10 @@ describe('hubot-ollama', () => {
     describe('alternative command aliases', () => {
       it('responds to ollama command', (done) => {
         mockOllamaChat('Response using ollama command');
-        room.user.say('alice', 'hubot ollama test prompt');
+        room.user.say('alice', 'hubot ollama: test prompt');
         setTimeout(() => {
           expect(room.messages).toEqual([
-            ['alice', 'hubot ollama test prompt'],
+            ['alice', 'hubot ollama: test prompt'],
             ['hubot', 'Response using ollama command'],
           ]);
           done();

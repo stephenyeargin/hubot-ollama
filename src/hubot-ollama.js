@@ -568,7 +568,7 @@ Evaluate the following prompt:`;
   };
 
   // Main command handler
-  robot.respond(/(?:ask|ollama|llm)\s+(.+)/i, async (msg) => {
+  robot.respond(/(?:ask|ollama|llm):?\s+(.+)/i, async (msg) => {
     const userPrompt = msg.match[1];
     robot.logger.debug(`User prompt: ${userPrompt}`);
     await handlePrompt(userPrompt, msg);
