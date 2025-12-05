@@ -2,6 +2,8 @@ const path = require('path');
 
 const Helper = require('hubot-test-helper');
 
+const registry = require('../src/tool-registry');
+
 jest.mock('ollama', () => {
   class MockOllama {
     constructor() {}
@@ -10,17 +12,36 @@ jest.mock('ollama', () => {
     }
     async chat(req) {
       const last = req.messages[req.messages.length - 1];
-      // Decision prompt: reply YES to trigger web flow
-      if (req.messages[0].content && /Reply with ONLY/.test(req.messages[0].content)) {
-        return { message: { content: 'YES' } };
+
+      // If tools are available and this is not a tool result follow-up, and web search tool is available, simulate tool call
+      const hasWebSearchTool = req.tools && req.tools.some(t => t.name === 'hubot_ollama_web_search');
+      if (req.tools && req.tools.length > 0 && hasWebSearchTool && !req.messages.some(m => m.role === 'user' && typeof m.content === 'string' && /^{/.test(m.content))) {
+        // Simulate the model choosing the web search tool
+        return {
+          message: {
+            content: 'I will search for information',
+            tool_calls: [{
+              function: {
+                name: 'hubot_ollama_web_search',
+                arguments: { prompt: last.content || 'search' }
+              }
+            }]
+          }
+        };
       }
-      // Search term generation: return fixed terms
-      if (last && last.content && /Generate 2-4 concise search terms/.test(last.content)) {
-        return { message: { content: 'node.js, release notes' } };
+
+      // If this is a tool result message (JSON content from user), return final answer
+      if (last && last.content && /^{/.test(last.content)) {
+        try {
+          const result = JSON.parse(last.content);
+          if (result.context) {
+            return { message: { content: 'Answer with web context' } };
+          }
+        } finally {}
       }
-      // Final chat: echo that web context was present by checking messages
-      const hadContext = req.messages.some(m => m.role === 'system' && /Relevant web context:\n\n/.test(m.content));
-      return { message: { content: hadContext ? 'Answer with web context' : 'Answer without web context' } };
+
+      // Default fallback
+      return { message: { content: 'Answer without web context' } };
     }
     async webSearch({ max_results }) {
       return {
@@ -57,6 +78,7 @@ describe('hubot-ollama web-enabled flow', () => {
 
   afterEach(() => {
     room.destroy();
+    registry.clearTools();
     delete process.env.HUBOT_OLLAMA_WEB_ENABLED;
     delete process.env.HUBOT_OLLAMA_API_KEY;
   });
@@ -66,13 +88,15 @@ describe('hubot-ollama web-enabled flow', () => {
     // Allow async chain (decision -> terms -> search -> fetch -> final)
     await new Promise((resolve) => setTimeout(resolve, 250));
     // Expect status message
-    expect(room.messages.some(m => /Searching for relevant sources/.test(m[1]))).toBe(true);
+    expect(room.messages.some(m => /Searching (web for )?relevant sources/.test(m[1]))).toBe(true);
     // Final answer should indicate web context was included
     const last = room.messages[room.messages.length - 1][1];
     expect(last).toMatch(/Answer with web context/);
   });
 
   it('falls back when web disabled', async () => {
+    // Clear tools from previous test first
+    registry.clearTools();
     // Recreate room so WEB_ENABLED is re-read at module init time
     room.destroy();
     process.env.HUBOT_OLLAMA_WEB_ENABLED = 'false';

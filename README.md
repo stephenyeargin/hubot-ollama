@@ -107,6 +107,70 @@ export HUBOT_OLLAMA_WEB_MAX_BYTES=120000
 export HUBOT_OLLAMA_WEB_TIMEOUT_MS=45000
 ```
 
+### Tool Integration
+The bot uses a **two-call LLM workflow** to enable tools when supported by the model:
+
+1. **Phase 1**: Model decides if a tool is needed to answer the question
+2. **Phase 2**: Tool is executed (if selected) and results are captured
+3. **Phase 3**: Model incorporates tool results into a natural conversational response
+
+**Built-in Tools:**
+- `hubot_ollama_get_current_time` - Returns the current UTC timestamp (always available)
+
+**Configuration:**
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `HUBOT_OLLAMA_TOOLS_ENABLED` | Optional | `true` | Enable tool support (`true`/`1` or `false`/`0`) |
+
+Enable tool support (default):
+```bash
+export HUBOT_OLLAMA_TOOLS_ENABLED=true
+```
+
+Disable tool support (useful for models without tool capability):
+```bash
+export HUBOT_OLLAMA_TOOLS_ENABLED=false
+```
+
+**How It Works:**
+- The bot automatically detects whether your selected model supports tools via `ollama show`.
+- If tools are enabled AND the model supports them, the two-call workflow activates.
+- If the model doesn't support tools or tools are disabled, the bot falls back to a single-call workflow.
+- When a tool is invoked, the model can request data (like current time) to enhance its response.
+
+**Example Tool Interaction:**
+```text
+user> hubot ask what time is it in UTC?
+hubot> (Phase 1: Model decides current time is needed)
+       (Phase 2: Tool returns: 2025-12-05T14:30:45.123Z)
+       (Phase 3: Model incorporates and responds)
+       The current UTC time is 2:30:45 PM on December 5, 2025.
+```
+
+**Registering Custom Tools:**
+Use the tool registry to add your own tools:
+
+```javascript
+const registry = require('hubot-ollama/src/tool-registry');
+
+registry.registerTool('my_tool', {
+  name: 'my_tool',
+  description: 'A brief description of what this tool does',
+  parameters: {
+    type: 'object',
+    properties: {
+      param1: { type: 'string', description: 'The first parameter' }
+    }
+  },
+  handler: async (args, robot, msg) => {
+    // args: parsed arguments from the LLM
+    // robot: Hubot robot instance
+    // msg: Current message object
+    return { result: 'Tool output here' };
+  }
+});
+```
+
 ### Conversation Context
 Hubot remembers recent exchanges within the configured scope, allowing natural follow-up questions:
 
