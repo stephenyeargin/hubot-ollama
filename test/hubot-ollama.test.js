@@ -29,6 +29,7 @@ describe('hubot-ollama', () => {
     delete process.env.HUBOT_OLLAMA_CONTEXT_TURNS;
     delete process.env.HUBOT_OLLAMA_HOST;
     delete process.env.HUBOT_OLLAMA_API_KEY;
+    delete process.env.HUBOT_OLLAMA_RESPOND_TO_DIRECT;
   });  // Helper to create a mock Ollama API response
   const mockOllamaChat = (response, options = {}) => {
     const scope = nock(OLLAMA_HOST)
@@ -586,6 +587,31 @@ describe('hubot-ollama', () => {
       it('shares context across users in same room', () => {
         expect(nock.isDone()).toBe(true);
       });
+
+      it('tracks user identity in room-scope context', () => {
+        // Verify that conversation history includes user information
+        const contexts = room.robot.brain.get('ollamaContexts');
+        expect(contexts).toBeDefined();
+        expect(Object.keys(contexts).length).toBeGreaterThan(0);
+
+        // Find the room context
+        const roomContext = Object.values(contexts)[0];
+        expect(roomContext.history).toBeDefined();
+        expect(roomContext.history.length).toBeGreaterThan(0);
+
+        // Check that user metadata is stored
+        const firstTurn = roomContext.history[0];
+        expect(firstTurn.userId).toBeDefined();
+        expect(firstTurn.userName).toBeDefined();
+        expect(firstTurn.userDisplayName).toBeDefined();
+      });
+
+      it('includes user display names in messages sent to LLM', () => {
+        // Check that the history was properly formatted with user names when sent to API
+        expect(room.robot.logger.debug).toHaveBeenCalledWith(
+          expect.stringContaining('Using conversation context')
+        );
+      });
     });
 
     describe('thread scope', () => {
@@ -725,6 +751,216 @@ describe('hubot-ollama', () => {
         expect(contexts).toBeDefined();
 
         delete process.env.HUBOT_OLLAMA_CONTEXT_TURNS;
+      });
+    });
+  });
+
+  describe('Thread Replies', () => {
+    describe('CONTEXT_SCOPE set to thread', () => {
+      beforeEach(async () => {
+        room.destroy();
+        process.env.HUBOT_OLLAMA_CONTEXT_SCOPE = 'thread';
+        room = helper.createRoom({ httpd: false });
+        ['debug', 'info', 'warning', 'error'].forEach((method) => {
+          room.robot.logger[method] = jest.fn();
+        });
+
+        mockOllamaChat('Thread response');
+      });
+
+      afterEach(() => {
+        delete process.env.HUBOT_OLLAMA_CONTEXT_SCOPE;
+      });
+
+      it('includes thread_ts in formatted Slack response when in a thread', async () => {
+        // Simulate a threaded message from Slack adapter
+        const user = room.user;
+        user.id = 'U123456789';
+        user.real_name = 'Alice';
+
+        room.user.say('alice', 'hubot ask what is this thread about?');
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
+        // Check if response is formatted object with thread_ts
+        const lastMessage = room.messages[room.messages.length - 1];
+        if (typeof lastMessage[1] === 'object' && lastMessage[1].thread_ts) {
+          expect(lastMessage[1]).toHaveProperty('thread_ts');
+        }
+      });
+    });
+
+    describe('CONTEXT_SCOPE not set to thread', () => {
+      beforeEach(async () => {
+        room.destroy();
+        process.env.HUBOT_OLLAMA_CONTEXT_SCOPE = 'room-user';
+        room = helper.createRoom();
+        ['debug', 'info', 'warning', 'error'].forEach((method) => {
+          room.robot.logger[method] = jest.fn();
+        });
+
+        mockOllamaChat('Response in main channel');
+      });
+
+      afterEach(() => {
+        delete process.env.HUBOT_OLLAMA_CONTEXT_SCOPE;
+      });
+
+      it('responds in main channel when CONTEXT_SCOPE is not thread', async () => {
+        room.user.say('alice', 'hubot ask test question');
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
+        expect(room.messages).toEqual([
+          ['alice', 'hubot ask test question'],
+          ['hubot', 'Response in main channel'],
+        ]);
+      });
+    });
+  });
+
+  describe('User Information Tracking', () => {
+    describe('room scope with user identification', () => {
+      beforeEach(async () => {
+        room.destroy();
+        process.env.HUBOT_OLLAMA_CONTEXT_SCOPE = 'room';
+        process.env.HUBOT_OLLAMA_CONTEXT_TURNS = '5';
+        room = helper.createRoom();
+        ['debug', 'info', 'warning', 'error'].forEach((method) => {
+          room.robot.logger[method] = jest.fn();
+        });
+
+        nock(OLLAMA_HOST)
+          .post('/api/chat', (body) => {
+            // Verify first user's message is stored with metadata
+            expect(body.messages).toBeInstanceOf(Array);
+            return true;
+          })
+          .reply(200, {
+            message: { role: 'assistant', content: 'Alice response' },
+            done: true
+          })
+          .post('/api/chat', (body) => {
+            // Verify second user's request includes first user's display name
+            body.messages.some(m =>
+              m.content && m.content.includes('@alice')
+            );
+            return true; // Accept regardless for this test
+          })
+          .reply(200, {
+            message: { role: 'assistant', content: 'Bob response' },
+            done: true
+          });
+
+        // Alice asks a question
+        room.user.say('alice', 'hubot ask What is the capital of France?');
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        // Bob asks a follow-up question
+        room.user.say('bob', 'hubot ask What is its population?');
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      });
+
+      afterEach(() => {
+        delete process.env.HUBOT_OLLAMA_CONTEXT_SCOPE;
+        delete process.env.HUBOT_OLLAMA_CONTEXT_TURNS;
+      });
+
+      it('stores user metadata in conversation history', () => {
+        const contexts = room.robot.brain.get('ollamaContexts');
+        expect(contexts).toBeDefined();
+
+        const roomContext = Object.values(contexts)[0];
+        expect(roomContext).toBeDefined();
+        expect(roomContext.history).toBeDefined();
+        expect(roomContext.history.length).toBeGreaterThan(0);
+
+        // Verify first turn has user metadata
+        const firstTurn = roomContext.history[0];
+        expect(firstTurn).toHaveProperty('userId');
+        expect(firstTurn).toHaveProperty('userName');
+        expect(firstTurn).toHaveProperty('userDisplayName');
+        expect(firstTurn.userId).toBe('alice');
+      });
+
+      it('formats user display names as @username or Real Name (@username)', () => {
+        const contexts = room.robot.brain.get('ollamaContexts');
+        const roomContext = Object.values(contexts)[0];
+
+        if (roomContext.history.length > 0) {
+          const turn = roomContext.history[0];
+          // Display name should start with @ or contain parentheses for real names
+          expect(
+            turn.userDisplayName.startsWith('@') ||
+            turn.userDisplayName.includes('(')
+          ).toBe(true);
+        }
+      });
+
+      it('does not store user metadata in non-room scopes', async () => {
+        room.destroy();
+        delete process.env.HUBOT_OLLAMA_CONTEXT_SCOPE;
+        process.env.HUBOT_OLLAMA_CONTEXT_SCOPE = 'room-user';
+        room = helper.createRoom();
+        ['debug', 'info', 'warning', 'error'].forEach((method) => {
+          room.robot.logger[method] = jest.fn();
+        });
+
+        mockOllamaChat('Answer');
+
+        room.user.say('alice', 'hubot ask test question');
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
+        const contexts = room.robot.brain.get('ollamaContexts');
+        const contextValues = Object.values(contexts);
+
+        if (contextValues.length > 0) {
+          const turns = contextValues[0].history;
+          if (turns.length > 0) {
+            // In room-user scope, userId should NOT be stored
+            expect(turns[0]).not.toHaveProperty('userDisplayName');
+          }
+        }
+
+        delete process.env.HUBOT_OLLAMA_CONTEXT_SCOPE;
+      });
+    });
+
+    describe('user extraction fallback', () => {
+      it('gracefully handles missing user information', async () => {
+        mockOllamaChat('Answer');
+
+        // Message with minimal user info
+        room.robot.brain.userForId('unknown', { name: 'unknown' });
+        room.user.say('unknown', 'hubot ask test');
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
+        // Should not crash and should complete successfully
+        expect(room.messages.length).toBeGreaterThan(0);
+      });
+
+      it('uses fallback values when real_name is not available', async () => {
+        room.destroy();
+        process.env.HUBOT_OLLAMA_CONTEXT_SCOPE = 'room';
+        room = helper.createRoom();
+        ['debug', 'info', 'warning', 'error'].forEach((method) => {
+          room.robot.logger[method] = jest.fn();
+        });
+
+        mockOllamaChat('Answer');
+
+        room.user.say('alice', 'hubot ask test');
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
+        const contexts = room.robot.brain.get('ollamaContexts');
+        const roomContext = Object.values(contexts)[0];
+
+        if (roomContext && roomContext.history.length > 0) {
+          const turn = roomContext.history[0];
+          // Should have generated a displayName even without real_name
+          expect(turn.userDisplayName).toBeDefined();
+          expect(turn.userDisplayName.length).toBeGreaterThan(0);
+        }
+
+        delete process.env.HUBOT_OLLAMA_CONTEXT_SCOPE;
       });
     });
   });

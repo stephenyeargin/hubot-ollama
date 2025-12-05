@@ -19,8 +19,8 @@ jest.mock('ollama', () => {
         return { message: { content: 'node.js, release notes' } };
       }
       // Final chat: echo that web context was present by checking messages
-      const hadContext = req.messages.some(m => m.role === 'assistant' && /Web context synthesized/.test(m.content));
-      return { message: { content: hadContext ? 'Answer with web context' : 'Answer without web' } };
+      const hadContext = req.messages.some(m => m.role === 'system' && /Relevant web context:\n\n/.test(m.content));
+      return { message: { content: hadContext ? 'Answer with web context' : 'Answer without web context' } };
     }
     async webSearch({ max_results }) {
       return {
