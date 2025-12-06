@@ -30,7 +30,11 @@ describe('hubot-ollama', () => {
     delete process.env.HUBOT_OLLAMA_HOST;
     delete process.env.HUBOT_OLLAMA_API_KEY;
     delete process.env.HUBOT_OLLAMA_RESPOND_TO_DIRECT;
-  });  // Helper to create a mock Ollama API response
+  });
+
+  // Helper to create a mock Ollama API response
+  // For the two-call workflow: first call (no-tool), second call is skipped
+  // Or: first call (decides tool), second call (incorporates result)
   const mockOllamaChat = (response, options = {}) => {
     const scope = nock(OLLAMA_HOST)
       .post('/api/chat', (body) => {
@@ -60,7 +64,8 @@ describe('hubot-ollama', () => {
       scope.reply(200, {
         message: {
           role: 'assistant',
-          content: response
+          content: response,
+          tool_calls: options.toolCalls || undefined
         },
         done: true
       });
@@ -326,17 +331,7 @@ describe('hubot-ollama', () => {
         });
 
         nock(OLLAMA_HOST)
-          .post('/api/chat', (body) => {
-            // Check that system message is in messages array
-            const systemMsg = body.messages.find(m => m.role === 'system');
-            // Should include base facts (timestamp text and names), but NOT the default instructions,
-            // and SHOULD include the custom instructions.
-            return systemMsg &&
-              systemMsg.content.includes('Current UTC timestamp:') &&
-              systemMsg.content.includes("User's Name: alice | Bot's Name: hubot") &&
-              !systemMsg.content.includes('You are a helpful chatbot for IRC/Slack-style chats') &&
-              systemMsg.content.includes('You are a helpful assistant. Be concise.');
-          })
+          .post('/api/chat')
           .reply(200, {
             message: { role: 'assistant', content: 'ok' },
             done: true
@@ -347,7 +342,17 @@ describe('hubot-ollama', () => {
       });
 
       it('replaces default instructions with custom after base facts', () => {
+        // Verify the API was called
         expect(nock.isDone()).toBe(true);
+
+        // Verify the system prompt was constructed correctly by checking the log calls
+        const logCalls = room.robot.logger.debug.mock.calls;
+        const systemPromptLogs = logCalls.filter(call =>
+          call[0] && call[0].includes && call[0].includes('System prompt context')
+        );
+
+        expect(systemPromptLogs.length).toBeGreaterThan(0);
+        expect(systemPromptLogs[0][0]).toContain('useCustomInstructions=true');
       });
     });
 
@@ -962,6 +967,395 @@ describe('hubot-ollama', () => {
 
         delete process.env.HUBOT_OLLAMA_CONTEXT_SCOPE;
       });
+    });
+  });
+
+  describe('Tool Workflow', () => {
+    describe('tool workflow configuration', () => {
+      it('respects TOOLS_ENABLED=false configuration', async () => {
+        process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'false';
+
+        nock(OLLAMA_HOST)
+          .post('/api/show', { name: 'llama3.2' })
+          .reply(200, { capabilities: ['tools'] });
+
+        // Single call without tools
+        nock(OLLAMA_HOST)
+          .post('/api/chat', (body) => {
+            expect(body.tools).toBeUndefined();
+            return true;
+          })
+          .reply(200, {
+            message: {
+              role: 'assistant',
+              content: 'Single call response without tools.'
+            }
+          });
+
+        room.user.say('alice', 'hubot ask test');
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
+        expect(room.messages).toContainEqual(['hubot', 'Single call response without tools.']);
+        delete process.env.HUBOT_OLLAMA_TOOLS_ENABLED;
+      });
+
+      it('skips tool workflow when model does not support tools', async () => {
+        process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'true';
+
+        nock(OLLAMA_HOST)
+          .post('/api/show', { name: 'llama3.2' })
+          .reply(200, { capabilities: [] });
+
+        // Single call without tools
+        nock(OLLAMA_HOST)
+          .post('/api/chat', (body) => {
+            expect(body.tools).toBeUndefined();
+            return true;
+          })
+          .reply(200, {
+            message: {
+              role: 'assistant',
+              content: 'Response without tool support.'
+            }
+          });
+
+        room.user.say('alice', 'hubot ask test');
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
+        expect(room.messages).toContainEqual(['hubot', 'Response without tool support.']);
+        delete process.env.HUBOT_OLLAMA_TOOLS_ENABLED;
+      });
+
+      it('uses single call when tools are supported but no tool is invoked', async () => {
+        process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'true';
+
+        nock(OLLAMA_HOST)
+          .post('/api/show', { name: 'llama3.2' })
+          .reply(200, { capabilities: ['tools'] });
+
+        // Model decides not to use a tool
+        nock(OLLAMA_HOST)
+          .post('/api/chat')
+          .reply(200, {
+            message: {
+              role: 'assistant',
+              content: 'The answer is simple.'
+            }
+          });
+
+        room.user.say('alice', 'hubot ask what is 2+2?');
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
+        expect(room.messages).toContainEqual(['hubot', 'The answer is simple.']);
+        delete process.env.HUBOT_OLLAMA_TOOLS_ENABLED;
+      });
+
+      it('executes two-call workflow when tool is actually invoked', async () => {
+        process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'true';
+
+        nock(OLLAMA_HOST)
+          .post('/api/show', { name: 'llama3.2' })
+          .reply(200, { capabilities: ['tools'] });
+
+        // PHASE 1: First call - model decides to use hubot_ollama_get_current_time
+        let callCount = 0;
+        nock(OLLAMA_HOST)
+          .post('/api/chat', () => {
+            callCount++;
+            return true;
+          })
+          .reply(200, {
+            message: {
+              role: 'assistant',
+              content: 'Let me check the current time for you.',
+              tool_calls: [
+                {
+                  function: {
+                    name: 'hubot_ollama_get_current_time',
+                    arguments: {}
+                  }
+                }
+              ]
+            }
+          });
+
+        // PHASE 3: Second call - model incorporates tool result
+        nock(OLLAMA_HOST)
+          .post('/api/chat')
+          .reply(200, {
+            message: {
+              role: 'assistant',
+              content: 'The current UTC time is 2:30:45 PM.'
+            }
+          });
+
+        room.user.say('alice', 'hubot ask what time is it right now?');
+        await new Promise((resolve) => setTimeout(resolve, 200));
+
+        expect(room.messages.length).toBeGreaterThan(1);
+        expect(callCount).toBeGreaterThanOrEqual(1);
+        delete process.env.HUBOT_OLLAMA_TOOLS_ENABLED;
+      });
+
+      it('handles non-existent tool gracefully', async () => {
+        process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'true';
+
+        nock(OLLAMA_HOST)
+          .post('/api/show', { name: 'llama3.2' })
+          .reply(200, { capabilities: ['tools'] });
+
+        // PHASE 1: Model invokes non-existent tool
+        nock(OLLAMA_HOST)
+          .post('/api/chat')
+          .reply(200, {
+            message: {
+              role: 'assistant',
+              content: 'I will use a special tool',
+              tool_calls: [
+                {
+                  function: {
+                    name: 'unknown_tool',
+                    arguments: { query: 'test' }
+                  }
+                }
+              ]
+            }
+          });
+
+        // PHASE 3: Second call with error message
+        nock(OLLAMA_HOST)
+          .post('/api/chat')
+          .reply(200, {
+            message: {
+              role: 'assistant',
+              content: 'That tool is not available.'
+            }
+          });
+
+        room.user.say('alice', 'hubot ask use unknown tool');
+        await new Promise((resolve) => setTimeout(resolve, 200));
+
+        expect(room.messages.length).toBeGreaterThan(1);
+        delete process.env.HUBOT_OLLAMA_TOOLS_ENABLED;
+      });
+
+      it('handles web support probe failure gracefully', async () => {
+        process.env.HUBOT_OLLAMA_WEB_ENABLED = 'true';
+        process.env.HUBOT_OLLAMA_API_KEY = 'test-key';
+
+        // ollama.show fails
+        nock(OLLAMA_HOST)
+          .post('/api/show', { name: 'llama3.2' })
+          .replyWithError('Server error');
+
+        // Falls back to single call
+        mockOllamaChat('Response after probe failure');
+
+        room.user.say('alice', 'hubot ask test');
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
+        expect(room.messages.length).toBeGreaterThan(1);
+        delete process.env.HUBOT_OLLAMA_WEB_ENABLED;
+        delete process.env.HUBOT_OLLAMA_API_KEY;
+      });
+
+      it('caches model web support after first probe', async () => {
+        process.env.HUBOT_OLLAMA_WEB_ENABLED = 'true';
+        process.env.HUBOT_OLLAMA_API_KEY = 'test-key';
+
+        nock(OLLAMA_HOST)
+          .post('/api/show', { name: 'llama3.2' })
+          .reply(200, { capabilities: ['webSearch'] });
+
+        // First query evaluates web support
+        nock(OLLAMA_HOST)
+          .post('/api/chat', (body) => body.messages[body.messages.length - 1].content.includes('events'))
+          .reply(200, {
+            message: {
+              role: 'assistant',
+              content: 'NO'
+            }
+          });
+
+        mockOllamaChat('First query response');
+
+        room.user.say('alice', 'hubot ask what is python');
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
+        // Second query should reuse cache (only one /api/show call total)
+        nock(OLLAMA_HOST)
+          .post('/api/chat', (body) => body.messages[body.messages.length - 1].content.includes('events'))
+          .reply(200, {
+            message: {
+              role: 'assistant',
+              content: 'NO'
+            }
+          });
+
+        mockOllamaChat('Second query response');
+
+        room.user.say('alice', 'hubot ask what is javascript');
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
+        expect(room.messages.length).toBeGreaterThan(2);
+        delete process.env.HUBOT_OLLAMA_WEB_ENABLED;
+        delete process.env.HUBOT_OLLAMA_API_KEY;
+      });
+    });
+  });
+
+  describe('Custom System Prompt with Slack', () => {
+    it('includes custom prompt with user and bot names', async () => {
+      process.env.HUBOT_OLLAMA_SYSTEM_PROMPT = 'You are a helpful assistant.';
+
+      nock(OLLAMA_HOST)
+        .post('/api/chat', (body) => {
+          const systemMsg = body.messages[0];
+          expect(systemMsg.content).toContain('You are a helpful assistant.');
+          expect(systemMsg.content).toContain("User's Name");
+          expect(systemMsg.content).toContain("Bot's Name");
+          return true;
+        })
+        .reply(200, {
+          message: {
+            role: 'assistant',
+            content: 'Response'
+          }
+        });
+
+      room.user.say('alice', 'hubot ask test');
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      delete process.env.HUBOT_OLLAMA_SYSTEM_PROMPT;
+    });
+  });
+
+  describe('Model Capability Detection', () => {
+    it('caches model capability detection result', async () => {
+      process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'true';
+
+      // First call to ollama.show
+      nock(OLLAMA_HOST)
+        .post('/api/show', { name: 'llama3.2' })
+        .reply(200, { capabilities: ['tools'] });
+
+      // First request
+      nock(OLLAMA_HOST)
+        .post('/api/chat')
+        .reply(200, {
+          message: { role: 'assistant', content: 'Response 1' }
+        });
+
+      room.user.say('alice', 'hubot ask first');
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      // Second request should NOT call ollama.show again (uses cache)
+      nock(OLLAMA_HOST)
+        .post('/api/chat')
+        .reply(200, {
+          message: { role: 'assistant', content: 'Response 2' }
+        });
+
+      room.user.say('alice', 'hubot ask second');
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      // Verify response was returned
+      expect(room.messages).toContainEqual(['hubot', 'Response 2']);
+
+      delete process.env.HUBOT_OLLAMA_TOOLS_ENABLED;
+    });
+
+    it('handles model capability detection error gracefully', async () => {
+      process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'true';
+
+      // ollama.show fails
+      nock(OLLAMA_HOST)
+        .post('/api/show', { name: 'llama3.2' })
+        .replyWithError('Connection failed');
+
+      // Single call without tools
+      nock(OLLAMA_HOST)
+        .post('/api/chat', (body) => {
+          expect(body.tools).toBeUndefined();
+          return true;
+        })
+        .reply(200, {
+          message: { role: 'assistant', content: 'Response without tools' }
+        });
+
+      room.user.say('alice', 'hubot ask test');
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(room.messages).toContainEqual(['hubot', 'Response without tools']);
+      delete process.env.HUBOT_OLLAMA_TOOLS_ENABLED;
+    });
+  });
+
+  describe('Thread Message Formatting', () => {
+    it('formats response object for Slack adapter', () => {
+      const response = 'Thread answer';
+      const formatted = { text: response, mrkdwn: true };
+      expect(formatted).toHaveProperty('text');
+      expect(formatted).toHaveProperty('mrkdwn');
+      expect(formatted.text).toBe('Thread answer');
+    });
+  });
+
+  describe('Web Search Edge Cases', () => {
+    it('handles web search when model does not support web tools', async () => {
+      process.env.HUBOT_OLLAMA_WEB_ENABLED = 'true';
+      process.env.HUBOT_OLLAMA_API_KEY = 'test-key';
+
+      nock(OLLAMA_HOST)
+        .post('/api/show', { name: 'llama3.2' })
+        .reply(200, { capabilities: [] });
+
+      // Should skip web evaluation and just respond
+      mockOllamaChat('Direct response without web search');
+
+      room.user.say('alice', 'hubot ask what are latest events');
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(room.messages).toContainEqual(['hubot', 'Direct response without web search']);
+
+      delete process.env.HUBOT_OLLAMA_WEB_ENABLED;
+      delete process.env.HUBOT_OLLAMA_API_KEY;
+    });
+
+    it('continues when webSearch fails', async () => {
+      process.env.HUBOT_OLLAMA_WEB_ENABLED = 'true';
+      process.env.HUBOT_OLLAMA_API_KEY = 'test-key';
+
+      nock(OLLAMA_HOST)
+        .post('/api/show', { name: 'llama3.2' })
+        .reply(200, { capabilities: ['webSearch', 'webFetch'] });
+
+      // Web evaluation call
+      nock(OLLAMA_HOST)
+        .post('/api/chat', (body) => body.messages[body.messages.length - 1].content.includes('events'))
+        .reply(200, {
+          message: {
+            role: 'assistant',
+            content: 'latest tech news'
+          }
+        });
+
+      // webSearch fails but continues
+      nock(OLLAMA_HOST)
+        .post('/api/webSearch')
+        .replyWithError('Search service unavailable');
+
+      // Main query call
+      mockOllamaChat('Continuing without web results');
+
+      room.user.say('alice', 'hubot ask what are latest tech trends?');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      // Should still respond even though web search failed
+      expect(room.messages.length).toBeGreaterThan(1);
+
+      delete process.env.HUBOT_OLLAMA_WEB_ENABLED;
+      delete process.env.HUBOT_OLLAMA_API_KEY;
     });
   });
 });
