@@ -37,7 +37,10 @@ jest.mock('ollama', () => {
           if (result.context) {
             return { message: { content: 'Answer with web context' } };
           }
-        } finally {}
+        // eslint-disable-next-line no-unused-vars
+        } catch (e) {
+          // Ignore JSON parse errors in mock
+        }
       }
 
       // Default fallback

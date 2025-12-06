@@ -2,14 +2,8 @@ const registry = require('../src/tool-registry');
 
 describe('Tool Registry', () => {
   beforeEach(() => {
-    // Clear tools between tests, but preserve the built-in time tool
-    const tools = registry.getTools();
-    const builtInTools = ['hubot_ollama_get_current_time'];
-    Object.keys(tools).forEach((toolName) => {
-      if (!builtInTools.includes(toolName)) {
-        // We can't directly clear, so we'll test around existing tools
-      }
-    });
+    // Clear tools between tests, preserving built-in time tool
+    registry.clearTools();
   });
 
   describe('Built-in Tools', () => {

@@ -92,11 +92,11 @@ hubot ollama compare sql vs nosql
 ```
 
 ### Web-Enabled Workflow
-When `HUBOT_OLLAMA_WEB_ENABLED=true` and the connected Ollama host supports web tools, the bot will:
-- Ask the model if a web search is necessary (recency/specificity check).
-- If needed: generate concise search terms, perform `webSearch`, fetch top results in parallel, synthesize a compact context block, and include it before the final analysis.
-- Send a status message indicating the search step.
-- Save fetched context to conversation history to avoid re-fetching next turn.
+When `HUBOT_OLLAMA_WEB_ENABLED=true` and the connected Ollama host supports web tools, the bot registers `hubot_ollama_web_search` and the LLM can invoke it directly. The flow now is:
+- Phase 1: The model chooses whether to call `hubot_ollama_web_search`.
+- Phase 2: The tool performs `webSearch`, fetches top results in parallel, builds a compact context block, and returns it.
+- Phase 3: The model incorporates the returned context into its final reply.
+- The bot sends a status message when the search is running and skips duplicate web searches in the same interaction.
 
 Enable:
 ```bash

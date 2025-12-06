@@ -42,7 +42,7 @@ module.exports = {
 module.exports.registerTool('hubot_ollama_get_current_time', {
   description: 'Get the current date and time in ISO 8601 format (UTC)',
   parameters: {},
-  handler: async() => ({
-      timestamp: new Date().toISOString()
-    })
+  handler: async () => ({
+    timestamp: new Date().toISOString()
+  })
 });
