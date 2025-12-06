@@ -1,4 +1,4 @@
-const utils = require('../src/ollama-utils');
+const utils = require('../src/utils/ollama-utils');
 
 describe('ollama-utils', () => {
   describe('sanitizeText', () => {

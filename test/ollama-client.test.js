@@ -1,4 +1,4 @@
-const client = require('../src/ollama-client');
+const client = require('../src/tools/ollama-client');
 
 describe('ollama-client', () => {
   test('exports expected functions', () => {

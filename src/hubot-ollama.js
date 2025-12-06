@@ -25,9 +25,10 @@
 
 const { Ollama } = require('ollama');
 
-const utils = require('./ollama-utils');
 const registry = require('./tool-registry');
-const createWebSearchTool = require('./web-search-tool');
+const createWebSearchTool = require('./tools/web-search-tool');
+const utils = require('./utils/ollama-utils');
+const { convertToSlackFormat } = require('./utils/slack-formatter');
 
 module.exports = (robot) => {
   const DEFAULT_MODEL = 'llama3.2';
@@ -84,10 +85,7 @@ module.exports = (robot) => {
     if (hasCustom) {
       // For custom prompts, prepend user/bot names to the custom instructions
       // Timestamp is now available via hubot_ollama_get_current_time tool
-      let baseFacts = `User's Name: ${userName} | Bot's Name: ${botName}`;
-      if (/slack/i.test(adapterName)) {
-        baseFacts += ` | Formatting: no Markdown tables (Slack does not support them); use simple lists or plain text.`;
-      }
+      const baseFacts = `User's Name: ${userName} | Bot's Name: ${botName}`;
       return `${baseFacts} | ${process.env.HUBOT_OLLAMA_SYSTEM_PROMPT}`;
     }
 
@@ -263,8 +261,11 @@ module.exports = (robot) => {
   const formatResponse = (response, msg) => {
     // Slack envelope
     if (/slack/.test(adapterName)) {
+      // Convert markdown to Slack-compatible format
+      const slackText = convertToSlackFormat(response);
+
       const formatted = {
-        text: response,
+        text: slackText,
         mrkdwn: true,
       };
 

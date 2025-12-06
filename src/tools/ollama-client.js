@@ -1,6 +1,6 @@
 // Ollama API logic and helpers for hubot-ollama
 
-const { truncate } = require('./ollama-utils');
+const { truncate } = require('../utils/ollama-utils');
 
 async function runWebSearch(ollama, query, maxResults) {
   const searchRes = await ollama.webSearch({ query, max_results: maxResults });
