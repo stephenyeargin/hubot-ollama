@@ -84,7 +84,7 @@ describe('hubot-ollama slack', () => {
         expect(room.messages).toEqual([
           ['alice', 'hubot ask what is the capital of France?'],
           ['hubot', {
-            text: 'The capital of France is **Paris**.',
+            text: 'The capital of France is *Paris*.',
             mrkdwn: true,
           }],
         ]);

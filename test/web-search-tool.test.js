@@ -1,7 +1,7 @@
-const ollamaClient = require('../src/ollama-client');
-const webSearchTool = require('../src/web-search-tool');
+const ollamaClient = require('../src/tools/ollama-client');
+const webSearchTool = require('../src/tools/web-search-tool');
 
-jest.mock('../src/ollama-client');
+jest.mock('../src/tools/ollama-client');
 
 describe('web-search-tool', () => {
   test('tool definition includes required properties', () => {

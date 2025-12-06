@@ -21,9 +21,9 @@ module.exports = (ollama, config, logger) => ({
         // Send status message to user first
         if (msg && msg.send) {
           const formattedMsg = robot && robot.adapterName && /slack/i.test(robot.adapterName)
-            ? { text: 'Searching web for relevant sources...', mrkdwn: true }
-            : 'Searching web for relevant sources...';
-          msg.send(formattedMsg);
+            ? { text: '⏳ _Searching web for relevant sources..._', mrkdwn: true }
+            : '⏳ Searching web for relevant sources...';
+          msg.reply(formattedMsg);
         }
 
         // Use the query provided by the model directly - no need to re-evaluate
