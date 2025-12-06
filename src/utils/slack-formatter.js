@@ -2,7 +2,7 @@
 // This handles common markdown patterns that LLMs generate but Slack doesn't support
 
 const AsciiTable = require('ascii-table');
-const { marked } = require('marked');
+const { Marked } = require('marked');
 
 /**
  * Convert markdown text to Slack-compatible formatting
@@ -118,8 +118,8 @@ function convertToSlackFormat(markdown) {
     }
   };
 
-  // Configure marked with our custom renderer
-  marked.use({
+  // Create a new Marked instance with custom renderer
+  const markedInstance = new Marked({
     renderer,
     breaks: true,
     gfm: true
@@ -127,7 +127,7 @@ function convertToSlackFormat(markdown) {
 
   try {
     // Parse and convert the markdown
-    let converted = marked.parse(markdown);
+    let converted = markedInstance.parse(markdown);
 
     // Clean up excessive newlines
     converted = converted.replace(/\n{3,}/g, '\n\n');
