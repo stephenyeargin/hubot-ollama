@@ -56,19 +56,21 @@ describe('slack-formatter', () => {
       expect(result).toContain('<https://example.com>');
     });
 
-    it('should convert tables to plain text', () => {
+    it('should render tables as ASCII code blocks', () => {
       const input = `| Column 1 | Column 2 |
 |----------|----------|
 | Data 1   | Data 2   |
 | Data 3   | Data 4   |`;
       const result = convertToSlackFormat(input);
-      // Should not contain table markup
-      expect(result).not.toContain('|----------|');
-      // Should contain the data
+      // Wrapped in code fences
+      expect(result).toContain('```');
+      // Contains table headers and rows
       expect(result).toContain('Column 1');
       expect(result).toContain('Column 2');
       expect(result).toContain('Data 1');
       expect(result).toContain('Data 2');
+      // ASCII borders present
+      expect(result).toMatch(/[+\-]+\|/);
     });
 
     it('should convert lists with bullets', () => {

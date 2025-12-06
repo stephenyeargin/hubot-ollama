@@ -42,7 +42,8 @@
   "scripts": {
     "test": "script/test",
     "prepare": "husky",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   },
   "jest": {
     "testPathIgnorePatterns": [
@@ -64,6 +65,7 @@
     "node": "24.10.0"
   },
   "dependencies": {
+    "ascii-table": "^0.0.9",
     "marked": "^15.0.6",
     "ollama": "^0.6.3"
   }

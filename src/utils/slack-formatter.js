@@ -1,6 +1,7 @@
 // Convert markdown to Slack-compatible mrkdwn format
 // This handles common markdown patterns that LLMs generate but Slack doesn't support
 
+const AsciiTable = require('ascii-table');
 const { marked } = require('marked');
 
 /**
@@ -22,18 +23,18 @@ function convertToSlackFormat(markdown) {
     },
 
     table({ header, rows }) {
-      let result = '\n';
-
+      // Render markdown tables as ASCII inside a code block for Slack
       const headerTexts = header.map(cell => this.parser.parseInline(cell.tokens));
-      result += headerTexts.join(' | ') + '\n';
-      result += headerTexts.map(() => '---').join(' | ') + '\n';
+      const rowTexts = rows.map(row => row.map(cell => this.parser.parseInline(cell.tokens)));
 
-      for (const row of rows) {
-        const cellTexts = row.map(cell => this.parser.parseInline(cell.tokens));
-        result += cellTexts.join(' | ') + '\n';
+      const table = new AsciiTable();
+      if (headerTexts.length > 0) {
+        table.setHeading(...headerTexts);
       }
+      rowTexts.forEach((cells) => table.addRow(...cells));
 
-      return result + '\n';
+      // ascii-table already includes borders and padding; wrap in code block
+      return `\n\`\`\`\n${table.toString()}\n\`\`\`\n\n`;
     },
 
     code({ text, lang }) {
