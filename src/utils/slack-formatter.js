@@ -24,8 +24,21 @@ function convertToSlackFormat(markdown) {
 
     table({ header, rows }) {
       // Render markdown tables as ASCII inside a code block for Slack
-      const headerTexts = header.map(cell => this.parser.parseInline(cell.tokens));
-      const rowTexts = rows.map(row => row.map(cell => this.parser.parseInline(cell.tokens)));
+      // Extract plain text from tokens (no formatting like bold/italic)
+      const extractPlainText = (tokens) => tokens.map(token => {
+          if (token.type === 'text') {
+            return token.text;
+          } else if (token.type === 'strong' || token.type === 'em') {
+            // Recursively extract text from formatted tokens
+            return extractPlainText(token.tokens);
+          } else if (token.tokens) {
+            return extractPlainText(token.tokens);
+          }
+          return token.raw || '';
+        }).join('');
+
+      const headerTexts = header.map(cell => extractPlainText(cell.tokens));
+      const rowTexts = rows.map(row => row.map(cell => extractPlainText(cell.tokens)));
 
       const table = new AsciiTable();
       if (headerTexts.length > 0) {
@@ -131,6 +144,32 @@ function convertToSlackFormat(markdown) {
 
     // Clean up excessive newlines
     converted = converted.replace(/\n{3,}/g, '\n\n');
+
+    // Clean up unmatched asterisks from malformed markdown
+    // Only process lines outside of code blocks (```...```)
+    const lines = converted.split('\n');
+    let inCodeBlock = false;
+    const processedLines = lines.map((line) => {
+      // Track if we're inside a code block
+      if (line.includes('```')) {
+        inCodeBlock = !inCodeBlock;
+        return line;
+      }
+
+      // Only clean up asterisks if we're not in a code block
+      if (inCodeBlock) {
+        return line;
+      }
+
+      // Handle cases like "text:** " -> "text: " (mismatched ** after colon)
+      let cleanedLine = line.replace(/:\*\*(?=\s|$)/g, ':');
+
+      // Handle patterns like "word:** " at line end (unmatched opening **)
+      cleanedLine = cleanedLine.replace(/([a-zA-Z])\*\*(\s*$)/g, '$1$2');
+
+      return cleanedLine;
+    });
+    converted = processedLines.join('\n');
 
     // Trim whitespace
     converted = converted.trim();

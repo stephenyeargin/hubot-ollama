@@ -44,7 +44,6 @@ Prompts are sanitized and truncated if they exceed the configured limit.
 | `HUBOT_OLLAMA_SYSTEM_PROMPT` | Optional | Built‑in concise chat prompt | Override system instructions |
 | `HUBOT_OLLAMA_MAX_PROMPT_CHARS` | Optional | `2000` | Truncate overly long user prompts |
 | `HUBOT_OLLAMA_TIMEOUT_MS` | Optional | `60000` (60 sec) | Abort request after this duration |
-| `HUBOT_OLLAMA_STREAM` | Optional | `false` | Stream partial chunks to chat (`true`/`1` to enable) |
 | `HUBOT_OLLAMA_CONTEXT_TTL_MS` | Optional | `600000` (10 min) | Time to maintain conversation history; `0` to disable |
 | `HUBOT_OLLAMA_CONTEXT_TURNS` | Optional | `5` | Maximum number of conversation turns to remember |
 | `HUBOT_OLLAMA_CONTEXT_SCOPE` | Optional | `room-user` | Context isolation: `room-user`, `room`, or `thread` |
@@ -61,10 +60,6 @@ export HUBOT_OLLAMA_MODEL=mistral
 Connect to remote Ollama server:
 ```bash
 export HUBOT_OLLAMA_HOST=http://my-ollama-server:11434
-```
-Enable streaming responses (sends chunks as they arrive):
-```bash
-export HUBOT_OLLAMA_STREAM=true
 ```
 Use Ollama cloud (requires [API key](https://ollama.com/settings/keys)):
 ```bash

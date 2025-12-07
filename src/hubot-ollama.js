@@ -8,7 +8,6 @@
 //   HUBOT_OLLAMA_SYSTEM_PROMPT - Custom system prompt (optional)
 //   HUBOT_OLLAMA_MAX_PROMPT_CHARS - Max user prompt length before truncation (default: 2000)
 //   HUBOT_OLLAMA_TIMEOUT_MS - Max time in ms before aborting request (default: 60000)
-//   HUBOT_OLLAMA_STREAM - Enable streaming responses: true/false/1/0 (default: false)
 //   HUBOT_OLLAMA_TOOLS_ENABLED - Enable tool support (two-call workflow): true/false/1/0 (default: true)
 //   HUBOT_OLLAMA_CONTEXT_TTL_MS - Time in ms to maintain conversation context (default: 600000 / 10 minutes, set to 0 to disable)
 //   HUBOT_OLLAMA_CONTEXT_TURNS - Number of recent turns to keep in context (default: 5)
@@ -42,7 +41,6 @@ module.exports = (robot) => {
   const CONTEXT_TURNS = Math.max(1, Number.parseInt(process.env.HUBOT_OLLAMA_CONTEXT_TURNS || '5', 10));
   const RAW_SCOPE = (process.env.HUBOT_OLLAMA_CONTEXT_SCOPE || 'room-user').toLowerCase();
   const CONTEXT_SCOPE = (['room', 'room-user', 'thread'].includes(RAW_SCOPE)) ? RAW_SCOPE : 'room-user';
-  const STREAM_ENABLED = /^1|true|yes$/i.test(process.env.HUBOT_OLLAMA_STREAM || '');
   const TOOLS_ENABLED = /^1|true|yes$/i.test(process.env.HUBOT_OLLAMA_TOOLS_ENABLED || 'true');
   const WEB_ENABLED = /^1|true|yes$/i.test(process.env.HUBOT_OLLAMA_WEB_ENABLED || '');
   const HAS_WEB_API_KEY = Boolean(process.env.OLLAMA_API_KEY || process.env.HUBOT_OLLAMA_API_KEY);
@@ -260,7 +258,7 @@ module.exports = (robot) => {
 
   const formatResponse = (response, msg) => {
     // Slack envelope
-    if (/slack/.test(adapterName)) {
+    if (/slack/i.test(adapterName)) {
       // Convert markdown to Slack-compatible format
       const slackText = convertToSlackFormat(response);
 
@@ -480,15 +478,12 @@ module.exports = (robot) => {
             currentResponse = await ollama.chat({
               model: selectedModel,
               messages,
-              stream: STREAM_ENABLED,
               tools: toolsArray
             });
             totalApiCalls++;
-            // Track token usage for non-streaming responses
-            if (!STREAM_ENABLED) {
-              if (currentResponse.prompt_eval_count) totalPromptTokens += currentResponse.prompt_eval_count;
-              if (currentResponse.eval_count) totalCompletionTokens += currentResponse.eval_count;
-            }
+            // Track token usage
+            if (currentResponse.prompt_eval_count) totalPromptTokens += currentResponse.prompt_eval_count;
+            if (currentResponse.eval_count) totalCompletionTokens += currentResponse.eval_count;
 
             // Check if the response invoked another tool
             if (currentResponse.message && currentResponse.message.tool_calls && currentResponse.message.tool_calls.length > 0) {
@@ -593,19 +588,8 @@ module.exports = (robot) => {
 
           clearTimeout(timeout);
 
-          if (STREAM_ENABLED) {
-            // Handle streaming response
-            let fullResponse = '';
-            for await (const part of currentResponse) {
-              if (part.message && part.message.content) {
-                const content = part.message.content;
-                fullResponse += content;
-                msg.send(formatResponse(content, msg));
-              }
-              // Accumulate token counts from streaming chunks
-              if (part.prompt_eval_count) totalPromptTokens += part.prompt_eval_count;
-              if (part.eval_count) totalCompletionTokens += part.eval_count;
-            }
+          // Handle response
+          if (currentResponse.message && currentResponse.message.content) {
             const interactionTime = Date.now() - interactionStart;
             robot.logger.info({
               message: `Interaction complete: ${interactionTime}ms, ${totalApiCalls} API call(s), ${totalPromptTokens} prompt tokens, ${totalCompletionTokens} completion tokens${toolsUsed.length > 0 ? `, tools: ${toolsUsed.join(', ')}` : ''}`,
@@ -616,25 +600,10 @@ module.exports = (robot) => {
               totalTokens: totalPromptTokens + totalCompletionTokens,
               toolsUsed
             });
-            return fullResponse;
-          } else {
-            // Handle non-streaming response
-            if (currentResponse.message && currentResponse.message.content) {
-              const interactionTime = Date.now() - interactionStart;
-              robot.logger.info({
-                message: `Interaction complete: ${interactionTime}ms, ${totalApiCalls} API call(s), ${totalPromptTokens} prompt tokens, ${totalCompletionTokens} completion tokens${toolsUsed.length > 0 ? `, tools: ${toolsUsed.join(', ')}` : ''}`,
-                interactionTimeMs: interactionTime,
-                apiCalls: totalApiCalls,
-                promptTokens: totalPromptTokens,
-                completionTokens: totalCompletionTokens,
-                totalTokens: totalPromptTokens + totalCompletionTokens,
-                toolsUsed
-              });
-              return currentResponse.message.content;
-            }
-            robot.logger.debug({ currentResponse });
-            throw new Error(`No content in response after ${toolIterationCount} tool call(s). Model may have exceeded max iterations (${maxToolIterations}) or returned invalid response.`);
+            return currentResponse.message.content;
           }
+          robot.logger.debug({ currentResponse });
+          throw new Error(`No content in response after ${toolIterationCount} tool call(s). Model may have exceeded max iterations (${maxToolIterations}) or returned invalid response.`);
         }
       } else {
         // Single call (tools disabled, model doesn't support them, or no tools available)
@@ -643,26 +612,17 @@ module.exports = (robot) => {
 
         const response = await ollama.chat({
           model: selectedModel,
-          messages,
-          stream: STREAM_ENABLED
+          messages
         });
         totalApiCalls++;
 
         clearTimeout(timeout);
 
-        if (STREAM_ENABLED) {
-          // Handle streaming response
-          let fullResponse = '';
-          for await (const part of response) {
-            if (part.message && part.message.content) {
-              const content = part.message.content;
-              fullResponse += content;
-              msg.send(formatResponse(content, msg));
-            }
-            // Accumulate token counts from streaming chunks
-            if (part.prompt_eval_count) totalPromptTokens += part.prompt_eval_count;
-            if (part.eval_count) totalCompletionTokens += part.eval_count;
-          }
+        // Track token usage
+        if (response.prompt_eval_count) totalPromptTokens += response.prompt_eval_count;
+        if (response.eval_count) totalCompletionTokens += response.eval_count;
+
+        if (response.message && response.message.content) {
           const interactionTime = Date.now() - interactionStart;
           robot.logger.info({
             message: `Interaction complete: ${interactionTime}ms, ${totalApiCalls} API call(s), ${totalPromptTokens} prompt tokens, ${totalCompletionTokens} completion tokens`,
@@ -673,26 +633,9 @@ module.exports = (robot) => {
             totalTokens: totalPromptTokens + totalCompletionTokens,
             toolsUsed: []
           });
-          return fullResponse;
-        } else {
-          // Handle non-streaming response
-          if (response.prompt_eval_count) totalPromptTokens += response.prompt_eval_count;
-          if (response.eval_count) totalCompletionTokens += response.eval_count;
-          if (response.message && response.message.content) {
-            const interactionTime = Date.now() - interactionStart;
-            robot.logger.info({
-              message: `Interaction complete: ${interactionTime}ms, ${totalApiCalls} API call(s), ${totalPromptTokens} prompt tokens, ${totalCompletionTokens} completion tokens`,
-              interactionTimeMs: interactionTime,
-              apiCalls: totalApiCalls,
-              promptTokens: totalPromptTokens,
-              completionTokens: totalCompletionTokens,
-              totalTokens: totalPromptTokens + totalCompletionTokens,
-              toolsUsed: []
-            });
-            return response.message.content;
-          }
-          throw new Error('No content in response');
+          return response.message.content;
         }
+        throw new Error('No content in response');
       }
     } catch (error) {
       clearTimeout(timeout);
@@ -750,10 +693,7 @@ module.exports = (robot) => {
         msg.send(formatResponse(`Note: Your prompt exceeded ${MAX_PROMPT_CHARS} characters and was truncated.`, msg));
       }
 
-      // Only send response if not streaming (streaming already sent chunks)
-      if (!STREAM_ENABLED) {
-        msg.send(formatResponse(response, msg));
-      }
+      msg.send(formatResponse(response, msg));
     } catch (err) {
       msg.send(formatResponse(`Error: ${err.message || 'An unexpected error occurred while communicating with Ollama.'}`, msg));
     }
