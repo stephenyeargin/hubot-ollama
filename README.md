@@ -4,6 +4,8 @@
 
 > Hubot script for integrating with [Ollama](https://ollama.ai/) - run local or cloud LLMs in your chat.
 
+![screenshot](docs/screenshot.png)
+
 ## Quick Start
 1. Install Ollama and pull a model:
    ```bash
