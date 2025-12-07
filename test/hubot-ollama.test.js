@@ -52,14 +52,6 @@ describe('hubot-ollama', () => {
       scope.replyWithError(options.error);
     } else if (options.statusCode) {
       scope.reply(options.statusCode, options.body || { error: 'API Error' });
-    } else if (options.stream) {
-      // For streaming responses
-      scope.reply(200, () => {
-        const chunks = response.split(' ').map((word) =>
-          JSON.stringify({ message: { role: 'assistant', content: word + ' ' } }) + '\n'
-        );
-        return chunks.join('');
-      });
     } else {
       scope.reply(200, {
         message: {
@@ -376,27 +368,6 @@ describe('hubot-ollama', () => {
 
       it('sends a truncation notice', () => {
         expect(room.messages[1][1]).toContain('truncated');
-      });
-    });
-
-    describe('streaming mode', () => {
-      beforeEach((done) => {
-        process.env.HUBOT_OLLAMA_STREAM = 'true';
-
-        mockOllamaChat('First chunk. Last chunk.', { stream: true });
-
-        room.user.say('alice', 'hubot ask test');
-        setTimeout(done, 200);
-      });
-
-      afterEach(() => {
-        delete process.env.HUBOT_OLLAMA_STREAM;
-      });
-
-      it('handles streaming response', () => {
-        // Should have received response
-        const hubotMessages = room.messages.filter((m) => m[0] === 'hubot');
-        expect(hubotMessages.length).toBeGreaterThan(0);
       });
     });
 

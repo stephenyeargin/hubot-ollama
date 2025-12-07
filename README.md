@@ -230,7 +230,7 @@ See the [cloud models list](https://ollama.com/search?c=cloud) for available mod
 | Connection refused | Ensure Ollama server is running (`ollama serve` or daemon) |
 | Model not found | Run `ollama list` to see available models, then `ollama pull <model>` |
 | Wrong server | Set `HUBOT_OLLAMA_HOST=http://your-server:11434` |
-| Long delays | Lower `HUBOT_OLLAMA_TIMEOUT_MS` or enable streaming with `HUBOT_OLLAMA_STREAM=true` |
+| Long delays | Try increasing `HUBOT_OLLAMA_TIMEOUT_MS` or use a faster model |
 | Web tools not running | The connected Ollama host must support `webSearch`/`webFetch`; feature auto-skips when unavailable |
 | No search performed | The model decided a web search was unnecessary; disable web workflow or ask explicitly |
 | `Error: unauthorized` | If using a cloud model, you must run `ollama signin` to register the host |

@@ -478,6 +478,7 @@ module.exports = (robot) => {
             currentResponse = await ollama.chat({
               model: selectedModel,
               messages,
+              stream: false,
               tools: toolsArray
             });
             totalApiCalls++;
@@ -612,7 +613,8 @@ module.exports = (robot) => {
 
         const response = await ollama.chat({
           model: selectedModel,
-          messages
+          messages,
+          stream: false
         });
         totalApiCalls++;
 

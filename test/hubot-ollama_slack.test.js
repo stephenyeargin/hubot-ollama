@@ -50,14 +50,6 @@ describe('hubot-ollama slack', () => {
       scope.replyWithError(options.error);
     } else if (options.statusCode) {
       scope.reply(options.statusCode, options.body || { error: 'API Error' });
-    } else if (options.stream) {
-      // For streaming responses
-      scope.reply(200, () => {
-        const chunks = response.split(' ').map((word) =>
-          JSON.stringify({ message: { role: 'assistant', content: word + ' ' } }) + '\n'
-        );
-        return chunks.join('');
-      });
     } else {
       scope.reply(200, {
         message: {
