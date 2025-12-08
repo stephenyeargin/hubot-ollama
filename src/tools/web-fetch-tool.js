@@ -41,7 +41,7 @@ module.exports = (ollama, config, logger) => ({
       let invocationContextKey = args._invocationContextKey;
       if (!invocationContextKey) {
         // Generate a temporary key for backward compatibility (tests, direct calls)
-        invocationContextKey = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+        invocationContextKey = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
         logger?.debug(`No _invocationContextKey provided, using temporary key: ${invocationContextKey}`);
       }
       const fetchedUrls = robot.brain.get('ollamaFetchedUrls');

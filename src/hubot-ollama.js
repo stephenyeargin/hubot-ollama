@@ -74,7 +74,7 @@ module.exports = (robot) => {
         instructions += "- Never request the same URL twice.\n";
         instructions += "- Batch multiple URLs into a single web_fetch call when possible (pass multiple URLs as an array).\n";
         instructions += "- Stop requesting tools if additional calls provide minimal value.\n";
-        instructions += "- Required order: (1) hubot_ollama_web_search, (2) zero to five hubot_ollama_web_fetch calls, (3) final answer.\n";
+        instructions += "- Required order: (1) hubot_ollama_web_search, (2) up to five hubot_ollama_web_fetch calls, (3) final answer.\n";
       }
     }
 
@@ -387,7 +387,7 @@ module.exports = (robot) => {
     // Create a unique invocation ID for per-invocation URL tracking
     // This allows URLs to be re-fetched in follow-up questions, but prevents
     // redundant fetches within the same interaction
-    const invocationId = `inv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const invocationId = `inv_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const invocationContextKey = `${getContextKey(msg)}#${invocationId}`;
 
     // Initialize invocation-scoped fetched URLs tracking
@@ -553,7 +553,7 @@ module.exports = (robot) => {
           let webSearchAlreadyPerformed = toolName === 'hubot_ollama_web_search';
 
           // Loop to handle chained tool calls (model may need multiple tools)
-          while (toolIterationCount <= maxToolIterations) {
+          while (toolIterationCount < maxToolIterations) {
             toolIterationCount++;
             currentResponse = await ollama.chat({
               model: selectedModel,
