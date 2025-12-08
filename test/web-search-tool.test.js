@@ -23,7 +23,7 @@ describe('web-search-tool', () => {
     expect(tool.parameters.query).toBeTruthy();
   });
 
-  test('handler returns no results when query is empty', async () => {
+  test('handler returns error when query is empty', async () => {
     const mockOllama = {};
     const config = {
       WEB_MAX_RESULTS: 5,
@@ -36,8 +36,49 @@ describe('web-search-tool', () => {
     const tool = webSearchTool(mockOllama, config, logger);
     const result = await tool.handler({ query: '' }, {}, {});
 
-    expect(result).toHaveProperty('needsWeb');
-    expect(result.needsWeb).toBe(false);
+    expect(result).toHaveProperty('error');
+    expect(result.error).toBe('No search query provided');
+  });
+
+  test('handler returns ONLY search metadata (title, url, snippet)', async () => {
+    const mockOllama = {};
+    const config = {
+      WEB_MAX_RESULTS: 5,
+      WEB_MAX_BYTES: 120000,
+      WEB_FETCH_CONCURRENCY: 3,
+      WEB_TIMEOUT_MS: 45000
+    };
+    const logger = { debug: jest.fn(), error: jest.fn() };
+
+    // Mock successful web search (NO fetch)
+    ollamaClient.runWebSearch.mockResolvedValue([
+      { title: 'Result 1', url: 'https://example.com/1', snippet: 'This is a snippet', content: 'This content should NOT be returned' },
+      { title: 'Result 2', url: 'https://example.com/2', description: 'Alternative description' }
+    ]);
+
+    const tool = webSearchTool(mockOllama, config, logger);
+    const result = await tool.handler({ query: 'test search' }, {}, {});
+
+    expect(result).toHaveProperty('results');
+    expect(Array.isArray(result.results)).toBe(true);
+    expect(result.results.length).toBe(2);
+
+    // Verify only metadata is returned
+    expect(result.results[0]).toEqual({
+      title: 'Result 1',
+      url: 'https://example.com/1',
+      snippet: 'This is a snippet'
+    });
+
+    expect(result.results[1]).toEqual({
+      title: 'Result 2',
+      url: 'https://example.com/2',
+      snippet: 'Alternative description'
+    });
+
+    // Verify fetch was NOT called
+    expect(ollamaClient.runWebFetchMany).not.toHaveBeenCalled();
+    expect(ollamaClient.buildWebContextMessage).not.toHaveBeenCalled();
   });
 
   test('handler performs web search with provided query', async () => {
@@ -50,24 +91,20 @@ describe('web-search-tool', () => {
     };
     const logger = { debug: jest.fn(), error: jest.fn() };
 
-    // Mock successful web search and fetch
+    // Mock successful web search
     ollamaClient.runWebSearch.mockResolvedValue([
-      { title: 'Result 1', url: 'https://example.com/1', content: 'Content 1' }
+      { title: 'Result 1', url: 'https://example.com/1', snippet: 'Snippet 1' }
     ]);
-    ollamaClient.runWebFetchMany.mockResolvedValue([
-      { title: 'Result 1', url: 'https://example.com/1', text: 'Fetched content' }
-    ]);
-    ollamaClient.buildWebContextMessage.mockReturnValue('Built context');
 
     const tool = webSearchTool(mockOllama, config, logger);
     const result = await tool.handler({ query: 'test search' }, {}, {});
 
-    expect(result).toHaveProperty('context');
-    expect(result.context).toBe('Built context');
+    expect(result.results).toBeTruthy();
+    expect(result.results.length).toBe(1);
     expect(ollamaClient.runWebSearch).toHaveBeenCalledWith(mockOllama, 'test search', 5);
   });
 
-  test('handler gracefully handles search errors', async () => {
+  test('handler returns error when search fails', async () => {
     const mockOllama = {};
     const config = {
       WEB_MAX_RESULTS: 5,
@@ -83,8 +120,27 @@ describe('web-search-tool', () => {
     const tool = webSearchTool(mockOllama, config, logger);
     const result = await tool.handler({ query: 'test' }, {}, {});
 
-    // Should return no results found, not error
-    expect(result).toHaveProperty('needsWeb');
-    expect(result.message).toBe('No search results found');
+    expect(result).toHaveProperty('error');
+    expect(result.error).toContain('Web search failed');
+  });
+
+  test('handler returns error when no results found', async () => {
+    const mockOllama = {};
+    const config = {
+      WEB_MAX_RESULTS: 5,
+      WEB_MAX_BYTES: 120000,
+      WEB_FETCH_CONCURRENCY: 3,
+      WEB_TIMEOUT_MS: 45000
+    };
+    const logger = { debug: jest.fn(), error: jest.fn() };
+
+    // Mock empty results
+    ollamaClient.runWebSearch.mockResolvedValue([]);
+
+    const tool = webSearchTool(mockOllama, config, logger);
+    const result = await tool.handler({ query: 'test' }, {}, {});
+
+    expect(result).toHaveProperty('error');
+    expect(result.error).toBe('No search results found');
   });
 });
