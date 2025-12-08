@@ -15,6 +15,8 @@ jest.mock('ollama', () => {
 
       // If tools are available and this is not a tool result follow-up, and web search tool is available, simulate tool call
       const hasWebSearchTool = req.tools && req.tools.some(t => t.name === 'hubot_ollama_web_search');
+      const hasWebFetchTool = req.tools && req.tools.some(t => t.name === 'hubot_ollama_web_fetch');
+
       if (req.tools && req.tools.length > 0 && hasWebSearchTool && !req.messages.some(m => m.role === 'user' && typeof m.content === 'string' && /^{/.test(m.content))) {
         // Simulate the model choosing the web search tool
         return {
@@ -30,11 +32,26 @@ jest.mock('ollama', () => {
         };
       }
 
-      // If this is a tool result message (JSON content from user), return final answer
+      // If this is a tool result message (JSON content from user), check what was returned
       if (last && last.content && /^{/.test(last.content)) {
         try {
           const result = JSON.parse(last.content);
-          if (result.context) {
+          // New behavior: web search returns results, web fetch returns pages
+          if (result.results && hasWebFetchTool) {
+            // Simulate model selecting fetch tool after search
+            return {
+              message: {
+                content: 'I will now fetch the content',
+                tool_calls: [{
+                  function: {
+                    name: 'hubot_ollama_web_fetch',
+                    arguments: { urls: [result.results[0].url] }
+                  }
+                }]
+              }
+            };
+          }
+          if (result.pages || result.results) {
             return { message: { content: 'Answer with web context' } };
           }
         // eslint-disable-next-line no-unused-vars
