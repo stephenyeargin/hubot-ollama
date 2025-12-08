@@ -21,10 +21,15 @@ module.exports = (ollama, config, logger) => ({
     try {
       // Send status message to user first
       if (msg && msg.send) {
-        const formattedMsg = robot && robot.adapterName && /slack/i.test(robot.adapterName)
-          ? { text: '⏳ _Searching web for relevant sources..._', mrkdwn: true }
-          : '⏳ Searching web for relevant sources...';
-        msg.reply(formattedMsg);
+        const statusText = '⏳ _Searching web for relevant sources..._';
+
+        if (robot && /slack/i.test(robot.adapterName)) {
+          const userId = msg?.message?.user?.id || msg?.message?.user?.name || '';
+          const mention = userId ? `<@${userId}> ` : '';
+          msg.send({ text: `${mention}${statusText}`, mrkdwn: true });
+        } else {
+          msg.reply(statusText);
+        }
       }
 
       // Use the query provided by the model directly - no need to re-evaluate

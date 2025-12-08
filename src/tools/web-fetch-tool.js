@@ -86,10 +86,17 @@ module.exports = (ollama, config, logger) => ({
             return url;
           }
         }).join(', ');
-        const formattedMsg = robot && robot.adapterName && /slack/i.test(robot.adapterName)
-          ? { text: `⏳ _Fetching content from ${urlsToFetch.length} URL(s): ${domains}_`, mrkdwn: true }
-          : `⏳ Fetching content from ${urlsToFetch.length} URL(s): ${domains}`;
-        msg.reply(formattedMsg);
+
+        const statusText = `⏳ _Fetching content from ${urlsToFetch.length} URL(s): ${domains}_`;
+
+        // Hubot's reply helper stringifies objects; manually mention user in Slack
+        if (robot && /slack/i.test(robot.adapterName)) {
+          const userId = msg?.message?.user?.id || msg?.message?.user?.name || '';
+          const mention = userId ? `<@${userId}> ` : '';
+          msg.send({ text: `${mention}${statusText}`, mrkdwn: true });
+        } else {
+          msg.reply(statusText);
+        }
       }
 
       // Fetch pages
