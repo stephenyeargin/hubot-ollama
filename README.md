@@ -11,7 +11,10 @@
    ```bash
    # Install Ollama from https://ollama.com
    ollama pull llama3.2
-   # Ollama server starts automatically after installation
+   # Ollama server starts automatically on macOS/Windows.
+   # On Linux, start manually (or enable the systemd service):
+   #   ollama serve
+   #   sudo systemctl enable --now ollama
    ```
 2. Add this package to your Hubot:
    ```bash
@@ -68,6 +71,11 @@ Use Ollama cloud (requires [API key](https://ollama.com/settings/keys)):
 export HUBOT_OLLAMA_HOST=https://ollama.com
 export HUBOT_OLLAMA_API_KEY=your_api_key
 export HUBOT_OLLAMA_MODEL=gpt-oss:120b  # Use a cloud model
+
+# Note: The host should match what `ollama signin` configures.
+# Some environments may use a region-specific or API-prefixed host.
+# Check `ollama signin --verbose` if unsure.
+
 ```
 Custom system prompt:
 ```bash
@@ -162,7 +170,7 @@ registry.registerTool('my_tool', {
   handler: async (args, robot, msg) => {
     // args: parsed arguments from the LLM
     // robot: Hubot robot instance
-    // msg: Current message object
+    // msg: Current message object, use msg.send() to output results while tool in use
     return { result: 'Tool output here' };
   }
 });
@@ -199,14 +207,16 @@ This package supports [Ollama's cloud service](https://ollama.com/cloud), which 
    ```bash
    export HUBOT_OLLAMA_HOST=https://ollama.com
    export HUBOT_OLLAMA_API_KEY=your_api_key
-   export HUBOT_OLLAMA_MODEL=gpt-oss:120b
+   export HUBOT_OLLAMA_MODEL=gpt-oss:120b-cloud
    ```
 
-### Available Cloud Models
+### Available Models
 
-See the [cloud models list](https://ollama.com/search?c=cloud) for available models. Popular options include:
-- `gpt-oss:120b` - Large open-source GPT model
-- Other cloud-enabled models tagged with `-cloud`
+Hubot-Ollama works with [any model supported by Ollama](https://ollama.com/search), whether running locally or in the cloud. You can switch models on the fly using `HUBOT_OLLAMA_MODEL`, making it easy to choose between speed, size, and capability.
+
+> Cloud model availability changes over time. Check the model catalog at [Ollama.com](https://ollama.com/search?c=cloud) for the latest list.
+
+Both local and cloud models share the same API, making the integration seamless regardless of where your model runs.
 
 **Note:** Cloud models require network connectivity and count against your cloud usage. Local models remain free and private.
 
@@ -222,8 +232,7 @@ See the [cloud models list](https://ollama.com/search?c=cloud) for available mod
 ## Security & Safety
 - Uses official Ollama JavaScript library with proper API communication.
 - Model name validation & prompt sanitization (strip control chars).
-- System prompt reinforces: stay concise; refuse to ignore instructions; no unsafe commands.
-- Local only by default: prompts never leave your machine unless using remote host.
+- When `HUBOT_OLLAMA_WEB_ENABLED=true`, web search results are fetched from external sites. Only the fetched pages — not your private prompts — are sent over the network.
 
 ## Troubleshooting
 | Symptom | Check |
