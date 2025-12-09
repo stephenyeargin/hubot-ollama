@@ -27,7 +27,7 @@ const { Ollama } = require('ollama');
 const registry = require('./tool-registry');
 const createWebFetchTool = require('./tools/web-fetch-tool');
 const createWebSearchTool = require('./tools/web-search-tool');
-const utils = require('./utils/ollama-utils');
+const { getAdapterType, sanitizeText } = require('./utils/ollama-utils');
 const { convertToSlackFormat } = require('./utils/slack-formatter');
 
 module.exports = (robot) => {
@@ -285,8 +285,10 @@ module.exports = (robot) => {
   };
 
   const formatResponse = (response, msg) => {
-    // Slack envelope
-    if (/slack/i.test(adapterName)) {
+    // Handle adapter-specific response formatting
+    const adapterType = getAdapterType(robot);
+
+    if (adapterType === 'slack') {
       // Convert markdown to Slack-compatible format
       const slackText = convertToSlackFormat(response);
 
@@ -772,7 +774,7 @@ module.exports = (robot) => {
     }
 
     // Sanitize and enforce prompt length limit
-    let sanitizedPrompt = utils.sanitizeText(userPrompt);
+    let sanitizedPrompt = sanitizeText(userPrompt);
     let wasTruncated = false;
     if (sanitizedPrompt.length > MAX_PROMPT_CHARS) {
       sanitizedPrompt = `${sanitizedPrompt.slice(0, MAX_PROMPT_CHARS)}...`;

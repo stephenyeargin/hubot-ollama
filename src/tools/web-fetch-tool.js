@@ -1,6 +1,8 @@
 // Web fetch tool for Ollama integration
 // Fetches content from URLs selected by the model
 
+const { getAdapterType } = require('../utils/ollama-utils');
+
 const ollamaClient = require('./ollama-client');
 
 module.exports = (ollama, config, logger) => ({
@@ -89,8 +91,8 @@ module.exports = (ollama, config, logger) => ({
 
         const statusText = `⏳ _Fetching content from ${urlsToFetch.length} URL(s): ${domains}_`;
 
-        // Hubot's reply helper stringifies objects; manually mention user in Slack
-        if (robot && /slack/i.test(robot.adapterName)) {
+        // Handle adapter-specific message formatting
+        if (getAdapterType(robot) === 'slack') {
           const userId = msg?.message?.user?.id || msg?.message?.user?.name || '';
           const mention = userId ? `<@${userId}> ` : '';
           msg.send({ text: `${mention}${statusText}`, mrkdwn: true });
