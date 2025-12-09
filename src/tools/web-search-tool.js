@@ -8,19 +8,25 @@ const ollamaClient = require('./ollama-client');
 
 module.exports = (ollama, config, logger) => ({
   name: 'hubot_ollama_web_search',
-  description: 'Search the web for relevant information. Returns search result metadata only (title, url, snippet).',
+  description: 'Search the web for information using a search query. This is for finding relevant web pages. For fetching content from a specific URL, use hubot_ollama_web_fetch instead. Returns search result metadata (title, url, snippet).',
   parameters: {
     query: {
       type: 'string',
-      description: 'Search query to look up on the web'
+      description: 'Search query text to find relevant web pages. Do not use URLs here - use hubot_ollama_web_fetch for fetching specific URLs.'
     }
   },
   handler: async (args, robot, msg) => {
-    // The model has already decided to use web search and provided the query
+    // Use the query provided by the model
     const searchQuery = args.query || args.prompt || '';
+
     logger?.debug(`Web search tool invoked with query: "${searchQuery}" (args: ${JSON.stringify(args)})`);
 
     try {
+      // Reject if no search query provided
+      if (!searchQuery) {
+        return { error: 'No search query provided' };
+      }
+
       // Send status message to user first
       if (msg && msg.send) {
         const statusText = '⏳ _Searching web for relevant sources..._';
@@ -32,11 +38,6 @@ module.exports = (ollama, config, logger) => ({
         } else {
           msg.reply(statusText);
         }
-      }
-
-      // Use the query provided by the model directly - no need to re-evaluate
-      if (!searchQuery) {
-        return { error: 'No search query provided' };
       }
 
       logger?.debug(`Search query: ${searchQuery}`);
@@ -66,9 +67,7 @@ module.exports = (ollama, config, logger) => ({
 
       logger?.debug(`Returning ${formattedResults.length} search results`);
 
-      return {
-        results: formattedResults
-      };
+      return { results: formattedResults };
     } catch (error) {
       logger?.error(`Web search tool error: ${error.message}`);
       return { error: error.message };
