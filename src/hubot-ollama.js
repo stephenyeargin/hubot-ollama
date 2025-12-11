@@ -27,10 +27,13 @@ const { Ollama } = require('ollama');
 const registry = require('./tool-registry');
 const createWebFetchTool = require('./tools/web-fetch-tool');
 const createWebSearchTool = require('./tools/web-search-tool');
+const { applyLoggerShims } = require('./utils/hubot-compat');
 const { getAdapterType, sanitizeText } = require('./utils/ollama-utils');
 const { convertToSlackFormat } = require('./utils/slack-formatter');
 
 module.exports = (robot) => {
+  // Ensure logger compatibility for both old and new Hubot versions
+  applyLoggerShims(robot.logger);
   const DEFAULT_MODEL = 'llama3.2';
   const RAW_MODEL = process.env.HUBOT_OLLAMA_MODEL || DEFAULT_MODEL;
   const MODEL_NAME_ALLOWED = /^[a-z0-9._:-]+$/i;
