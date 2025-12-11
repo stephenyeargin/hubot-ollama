@@ -12,7 +12,8 @@ describe('hubot-ollama', () => {
     room = helper.createRoom();
 
     // Mock robot.logger methods
-    ['debug', 'info', 'warning', 'error'].forEach((method) => {
+    // Support both 'warn' and 'warning' for compatibility with different Hubot versions
+    ['debug', 'info', 'warn', 'warning', 'error'].forEach((method) => {
       room.robot.logger[method] = jest.fn();
     });
 
