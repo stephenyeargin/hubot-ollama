@@ -338,6 +338,38 @@ module.exports = (robot) => {
     }
   };
 
+  // Helper function to handle fallback responses when tools can't be used
+  const makeFallbackResponse = async (logMessage, ollama, selectedModel, messages, totalApiCalls, totalPromptTokens, totalCompletionTokens, timeout, interactionStart) => {
+    robot.logger.info(logMessage);
+    const fallbackResponse = await ollama.chat({
+      model: selectedModel,
+      messages,
+      stream: false
+    });
+    const updatedApiCalls = totalApiCalls + 1;
+    let updatedPromptTokens = totalPromptTokens;
+    let updatedCompletionTokens = totalCompletionTokens;
+    if (fallbackResponse.prompt_eval_count) updatedPromptTokens += fallbackResponse.prompt_eval_count;
+    if (fallbackResponse.eval_count) updatedCompletionTokens += fallbackResponse.eval_count;
+
+    clearTimeout(timeout);
+
+    if (fallbackResponse.message && fallbackResponse.message.content) {
+      const interactionTime = Date.now() - interactionStart;
+      robot.logger.info({
+        message: `Interaction complete: ${interactionTime}ms, ${updatedApiCalls} API call(s), ${updatedPromptTokens} prompt tokens, ${updatedCompletionTokens} completion tokens`,
+        interactionTimeMs: interactionTime,
+        apiCalls: updatedApiCalls,
+        promptTokens: updatedPromptTokens,
+        completionTokens: updatedCompletionTokens,
+        totalTokens: updatedPromptTokens + updatedCompletionTokens,
+        toolsUsed: []
+      });
+      return fallbackResponse.message.content;
+    }
+    throw new Error('No content in response');
+  };
+
   // Helper function to execute ollama API call with tool support
   // Workflow: (1) First call to determine tools if needed (2) Execute tool(s) (3) Second call to incorporate results
   const askOllama = async (userPrompt, msg, conversationHistory = []) => {
@@ -450,6 +482,7 @@ module.exports = (robot) => {
 
         let toolResults = null;
         let toolName = null;
+        let wasNameless = false; // Track if initial tool call was nameless (even if recovered)
         // Track consecutive empty tool outcomes to break out early
         const isEmptyToolResult = (name, result) => {
           if (!result) return true;
@@ -483,7 +516,9 @@ module.exports = (robot) => {
           }
 
           const hintedType = toolArgs && (toolArgs.type || (toolArgs.parameters && toolArgs.parameters.type));
-          if (!toolName || !toolName.trim()) {
+          // Track nameless calls before any recovery attempts
+          wasNameless = !toolName || !toolName.trim();
+          if (wasNameless) {
             robot.logger.warn(`Tool call missing name; hinted type=${hintedType || 'none'}. Raw call: ${JSON.stringify(toolCall)}`);
             robot.logger.debug(`Available tools: ${Object.keys(registry.getTools()).join(', ') || 'none'}`);
 
@@ -493,61 +528,15 @@ module.exports = (robot) => {
               toolName = hintedType;
               toolCall.function.name = hintedType;
             } else if (hintedType && !registry.getTools()[hintedType]) {
-              robot.logger.info(`Hinted tool '${hintedType}' is not registered; skipping tool execution and retrying without tools.`);
-              const fallbackResponse = await ollama.chat({
-                model: selectedModel,
-                messages,
-                stream: false
-              });
-              totalApiCalls++;
-              if (fallbackResponse.prompt_eval_count) totalPromptTokens += fallbackResponse.prompt_eval_count;
-              if (fallbackResponse.eval_count) totalCompletionTokens += fallbackResponse.eval_count;
-
-              clearTimeout(timeout);
-
-              if (fallbackResponse.message && fallbackResponse.message.content) {
-                const interactionTime = Date.now() - interactionStart;
-                robot.logger.info({
-                  message: `Interaction complete: ${interactionTime}ms, ${totalApiCalls} API call(s), ${totalPromptTokens} prompt tokens, ${totalCompletionTokens} completion tokens`,
-                  interactionTimeMs: interactionTime,
-                  apiCalls: totalApiCalls,
-                  promptTokens: totalPromptTokens,
-                  completionTokens: totalCompletionTokens,
-                  totalTokens: totalPromptTokens + totalCompletionTokens,
-                  toolsUsed: []
-                });
-                return fallbackResponse.message.content;
-              }
-              throw new Error('No content in response');
+              return await makeFallbackResponse(
+                `Hinted tool '${hintedType}' is not registered; skipping tool execution and retrying without tools.`,
+                ollama, selectedModel, messages, totalApiCalls, totalPromptTokens, totalCompletionTokens, timeout, interactionStart
+              );
             } else if (!hintedType) {
-              robot.logger.info('Ignoring nameless tool call with no type hint; proceeding without tool execution and retrying without tools.');
-
-              // Make a follow-up call without tools to let the model answer directly
-              const fallbackResponse = await ollama.chat({
-                model: selectedModel,
-                messages,
-                stream: false
-              });
-              totalApiCalls++;
-              if (fallbackResponse.prompt_eval_count) totalPromptTokens += fallbackResponse.prompt_eval_count;
-              if (fallbackResponse.eval_count) totalCompletionTokens += fallbackResponse.eval_count;
-
-              clearTimeout(timeout);
-
-              if (fallbackResponse.message && fallbackResponse.message.content) {
-                const interactionTime = Date.now() - interactionStart;
-                robot.logger.info({
-                  message: `Interaction complete: ${interactionTime}ms, ${totalApiCalls} API call(s), ${totalPromptTokens} prompt tokens, ${totalCompletionTokens} completion tokens`,
-                  interactionTimeMs: interactionTime,
-                  apiCalls: totalApiCalls,
-                  promptTokens: totalPromptTokens,
-                  completionTokens: totalCompletionTokens,
-                  totalTokens: totalPromptTokens + totalCompletionTokens,
-                  toolsUsed: []
-                });
-                return fallbackResponse.message.content;
-              }
-              throw new Error('No content in response');
+              return await makeFallbackResponse(
+                'Ignoring nameless tool call with no type hint; proceeding without tool execution and retrying without tools.',
+                ollama, selectedModel, messages, totalApiCalls, totalPromptTokens, totalCompletionTokens, timeout, interactionStart
+              );
             }
           }
           robot.logger.debug(`Tool selected: ${toolName} with args: ${JSON.stringify(toolArgs)}`);
@@ -648,8 +637,8 @@ module.exports = (robot) => {
           let toolIterationCount = 0;
           let webSearchAlreadyPerformed = toolName === 'hubot_ollama_web_search';
           let bailedDueToEmptyToolResults = false;
-          // Track nameless tool calls to avoid spinning
-          let namelessToolCallCount = (!toolName || !toolName.trim()) ? 1 : 0;
+          // Track nameless tool calls to avoid spinning (count initial nameless call if present)
+          let namelessToolCallCount = wasNameless ? 1 : 0;
           const MAX_NAMELESS_TOOL_CALLS = 2;
           let bailedDueToNamelessToolCalls = false;
 
@@ -667,7 +656,7 @@ module.exports = (robot) => {
             if (currentResponse.prompt_eval_count) totalPromptTokens += currentResponse.prompt_eval_count;
             if (currentResponse.eval_count) totalCompletionTokens += currentResponse.eval_count;
 
-              // Check if the response invoked another tool
+            // Check if the response invoked another tool
             if (currentResponse.message && currentResponse.message.tool_calls && currentResponse.message.tool_calls.length > 0) {
               const chainedToolCall = currentResponse.message.tool_calls[0];
               let chainedToolName = chainedToolCall.function && typeof chainedToolCall.function.name === 'string' ? chainedToolCall.function.name : '';
@@ -701,7 +690,6 @@ module.exports = (robot) => {
 
               // Check if tool call limit has been reached
               let skipToolCall = false;
-              let chainedToolResults = null;
               if (toolCallLimits.hasOwnProperty(chainedToolName) && toolCallCounts[chainedToolName] >= toolCallLimits[chainedToolName]) {
                 robot.logger.warn(`Tool '${chainedToolName}' call limit reached (${toolCallLimits[chainedToolName]} calls max)`);
                 skipToolCall = true;
@@ -809,8 +797,19 @@ module.exports = (robot) => {
 
                   if (fallbackResponse.message && fallbackResponse.message.content) {
                     currentResponse = fallbackResponse;
-                    namelessToolCallCount = 0; // reset after successful fallback
                     break;
+                  } else {
+                    robot.logger.warn('Fallback call for nameless chained tool returned no content.');
+                    messages.push({
+                      role: 'assistant',
+                      content: currentResponse.message.content || '',
+                      tool_calls: [chainedToolCall]
+                    });
+                    messages.push({
+                      role: 'user',
+                      content: JSON.stringify({ error: 'Fallback call for nameless chained tool returned no content.' })
+                    });
+                    continue;
                   }
                 }
 
