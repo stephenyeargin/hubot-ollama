@@ -25,6 +25,7 @@
 const { Ollama } = require('ollama');
 
 const registry = require('./tool-registry');
+const createJavaScriptReplTool = require('./tools/javascript-repl-tool');
 const createWebFetchTool = require('./tools/web-fetch-tool');
 const createWebSearchTool = require('./tools/web-search-tool');
 const { applyLoggerShims } = require('./utils/hubot-compat');
@@ -120,6 +121,17 @@ module.exports = (robot) => {
   }
 
   const ollama = new Ollama(ollamaConfig);
+
+  // Register JavaScript REPL tool if tools are enabled
+  if (TOOLS_ENABLED) {
+    const jsReplTool = createJavaScriptReplTool(ollama, {}, robot.logger);
+    registry.registerTool(jsReplTool.name, {
+      description: jsReplTool.description,
+      parameters: jsReplTool.parameters,
+      handler: jsReplTool.handler
+    });
+    robot.logger.debug('Registered JavaScript REPL tool');
+  }
 
   // Register web search and web fetch tools if web is enabled and tools are supported
   if (WEB_ENABLED && HAS_WEB_API_KEY && TOOLS_ENABLED) {
