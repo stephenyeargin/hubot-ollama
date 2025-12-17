@@ -1,7 +1,7 @@
 {
   "name": "hubot-ollama",
   "description": "Hubot script for integrating with Ollama local LLMs",
-  "version": "1.5.4",
+  "version": "1.6.0",
   "author": "Stephen Yeargin <stephen@yearg.in>",
   "homepage": "https://github.com/stephenyeargin/hubot-ollama",
   "license": "MIT",
