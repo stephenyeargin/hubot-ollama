@@ -54,6 +54,9 @@ module.exports = (robot) => {
   const WEB_MAX_BYTES = Math.max(1024, Number.parseInt(process.env.HUBOT_OLLAMA_WEB_MAX_BYTES || '120000', 10));
   const WEB_TIMEOUT_MS = Math.max(1000, Number.parseInt(process.env.HUBOT_OLLAMA_WEB_TIMEOUT_MS || '45000', 10));
 
+  // Emoji used with compatible adapters to indicate message is being processed
+  const THINKING_EMOJI = 'hourglass_flowing_sand';
+
   // For formatting instructions
   const adapterName = robot.adapterName ?? robot.adapter?.name;
 
@@ -323,6 +326,59 @@ module.exports = (robot) => {
       return formatted;
     }
     return response;
+  };
+
+  // Reaction helpers (adapter-aware; no-ops when unsupported)
+  const getReactionTarget = (msg, adapterType) => {
+    try {
+      if (!msg || !msg.message) return null;
+      if (adapterType === 'slack') {
+        const channel = msg.message.room;
+        const raw = msg.message.rawMessage || {};
+        const envelopeMsg = (msg.envelope && msg.envelope.message) || {};
+        const timestamp = raw.ts || raw.event_ts || msg.message.thread_ts || envelopeMsg.ts || envelopeMsg.thread_ts;
+        if (channel && timestamp) return { channel, timestamp };
+      }
+      // Other adapters can be added here in the future
+      return null;
+    } catch (e) {
+      robot.logger.debug(`Could not get reaction target (${adapterType}): ${e && e.message}`);
+      return null;
+    }
+  };
+
+  const addThinkingReaction = async (msg, name) => {
+    const adapterType = getAdapterType(robot);
+    try {
+      if (adapterType === 'slack') {
+        const target = getReactionTarget(msg, adapterType);
+        const addFn = robot?.adapter?.client?.web?.reactions?.add;
+        if (!target || typeof addFn !== 'function') return false;
+        await addFn({ name, channel: target.channel, timestamp: target.timestamp });
+        return true;
+      }
+      return false;
+    } catch (e) {
+      robot.logger.debug(`Reaction add failed (${adapterType}): ${e && e.message}`);
+      return false;
+    }
+  };
+
+  const removeThinkingReaction = async (msg, name) => {
+    const adapterType = getAdapterType(robot);
+    try {
+      if (adapterType === 'slack') {
+        const target = getReactionTarget(msg, adapterType);
+        const removeFn = robot?.adapter?.client?.web?.reactions?.remove;
+        if (!target || typeof removeFn !== 'function') return false;
+        await removeFn({ name, channel: target.channel, timestamp: target.timestamp });
+        return true;
+      }
+      return false;
+    } catch (e) {
+      robot.logger.debug(`Reaction remove failed (${adapterType}): ${e && e.message}`);
+      return false;
+    }
   };
 
   // Model tool support cache to avoid repeated probes
@@ -967,8 +1023,11 @@ module.exports = (robot) => {
 
     // Get conversation history for this user/room
     const conversationHistory = getConversationHistory(msg);
-
+    let reactionAdded = false;
     try {
+      // Try to add a thinking reaction while processing (adapter-aware)
+      reactionAdded = await addThinkingReaction(msg, THINKING_EMOJI);
+
       const response = await askOllama(sanitizedPrompt, msg, conversationHistory);
 
       if (!response || !response.trim()) {
@@ -986,6 +1045,9 @@ module.exports = (robot) => {
       msg.send(formatResponse(response, msg));
     } catch (err) {
       msg.send(formatResponse(`Error: ${err.message || 'An unexpected error occurred while communicating with Ollama.'}`, msg));
+    } finally {
+      // Best-effort removal of the reaction once we're done
+      if (reactionAdded) await removeThinkingReaction(msg, THINKING_EMOJI);
     }
   };
 
