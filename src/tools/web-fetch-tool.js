@@ -81,22 +81,38 @@ module.exports = (ollama, config, logger) => ({
 
       // Send status message to user with domain information
       if (msg && msg.send) {
-        const domains = urlsToFetch.map(url => {
-          try {
-            return new URL(url).hostname;
-          } catch {
-            return url;
-          }
-        }).join(', ');
+        // Prepare adapter-specific domain text
+        const adapterType = getAdapterType(robot);
+        let statusText;
 
-        const statusText = `⏳ _Fetching content from ${urlsToFetch.length} URL(s): ${domains}_`;
+        if (adapterType === 'slack') {
+          // Build Slack-formatted links: <url|domain> without unfurling
+          const links = urlsToFetch.map(url => {
+            try {
+              const u = new URL(url);
+              const domain = u.hostname;
+              return `<${url}|${domain}>`;
+            } catch {
+              // Fallback: show raw string without linking
+              return url;
+            }
+          }).join(', ');
+          statusText = `⏳ _Fetching content from ${urlsToFetch.length} URL(s): ${links}_`;
 
-        // Handle adapter-specific message formatting
-        if (getAdapterType(robot) === 'slack') {
           const userId = msg?.message?.user?.id || msg?.message?.user?.name || '';
           const mention = userId ? `<@${userId}> ` : '';
-          msg.send({ text: `${mention}${statusText}`, mrkdwn: true });
+          const threadTs = msg?.message?.thread_ts || msg?.message?.ts || msg?.message?.rawMessage?.ts || undefined;
+          msg.send({ text: `${mention}${statusText}`, mrkdwn: true, unfurl_links: false, unfurl_media: false, thread_ts: threadTs });
         } else {
+          // Non-Slack: plain domains text
+          const domains = urlsToFetch.map(url => {
+            try {
+              return new URL(url).hostname;
+            } catch {
+              return url;
+            }
+          }).join(', ');
+          statusText = `⏳ _Fetching content from ${urlsToFetch.length} URL(s): ${domains}_`;
           msg.reply(statusText);
         }
       }

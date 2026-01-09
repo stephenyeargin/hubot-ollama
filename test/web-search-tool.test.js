@@ -143,4 +143,41 @@ describe('web-search-tool', () => {
     expect(result).toHaveProperty('error');
     expect(result.error).toBe('No search results found');
   });
+
+  test('sends Slack-formatted status as a thread reply', async () => {
+    const mockOllama = {};
+    const config = {
+      WEB_MAX_RESULTS: 5,
+      WEB_MAX_BYTES: 120000,
+      WEB_FETCH_CONCURRENCY: 3,
+      WEB_TIMEOUT_MS: 45000
+    };
+    const logger = { debug: jest.fn(), error: jest.fn() };
+
+    // Mock search results to proceed past status
+    ollamaClient.runWebSearch.mockResolvedValue([
+      { title: 'Result 1', url: 'https://example.com/1', snippet: 'Snippet' }
+    ]);
+
+    const tool = webSearchTool(mockOllama, config, logger);
+
+    const mockRobot = {
+      adapterName: 'slack',
+    };
+
+    const msg = {
+      message: { user: { id: 'U789' }, rawMessage: { ts: '456.789' } },
+      send: jest.fn(),
+    };
+
+    await tool.handler({ query: 'test' }, mockRobot, msg);
+
+    expect(msg.send).toHaveBeenCalledTimes(1);
+    const payload = msg.send.mock.calls[0][0];
+    expect(payload.mrkdwn).toBe(true);
+    expect(typeof payload.text).toBe('string');
+    expect(payload.text).toContain('<@U789>');
+    expect(payload.text).toContain('Searching web for relevant sources');
+    expect(payload.thread_ts).toBe('456.789');
+  });
 });
