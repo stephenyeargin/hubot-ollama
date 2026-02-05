@@ -20,12 +20,18 @@ jobs:
           node-version: "20"
           registry-url: https://registry.npmjs.org
 
+      - name: Update npm to latest version
+        run: npm install -g npm@latest
+
       - run: npm ci
       - run: npm test
 
       - name: Publish to npm
         id: publish
         run: |
+          # Verify npm version supports OIDC
+          echo "npm version: $(npm --version)"
+
           # Check if version is already published
           PACKAGE_NAME=$(node -p "require('./package.json').name")
           PACKAGE_VERSION=$(node -p "require('./package.json').version")
