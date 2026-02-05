@@ -73,15 +73,22 @@ describe('Context Summarization', () => {
     expect(contexts[contextKey]).toHaveProperty('lastUpdated');
   });
 
-  it('should cap summary length at 600 characters', async () => {
+  it('should cap summary length at 600 characters as safety fallback', async () => {
     const longSummary = 'a'.repeat(1000);
-    const cappedLength = 600;
+    const safetyThreshold = 650;
+    const capLength = 600;
 
-    // Simulate capping
-    const capped = longSummary.length > 600 ? longSummary.slice(0, 600) + '...' : longSummary;
+    // Simulate capping (only when exceeding safety threshold)
+    const capped = longSummary.length > safetyThreshold ? longSummary.slice(0, capLength) + '...' : longSummary;
 
-    expect(capped.length).toBe(cappedLength + 3); // +3 for '...'
+    expect(capped.length).toBe(capLength + 3); // +3 for '...'
     expect(capped.endsWith('...')).toBe(true);
+
+    // Summary within limit should not be capped
+    const shortSummary = 'a'.repeat(600);
+    const notCapped = shortSummary.length > safetyThreshold ? shortSummary.slice(0, capLength) + '...' : shortSummary;
+    expect(notCapped.length).toBe(600);
+    expect(notCapped.endsWith('...')).toBe(false);
   });
 
   it('should preserve recent turns when summarizing', () => {

@@ -259,7 +259,8 @@ module.exports = (robot) => {
 Preserve facts, decisions, user preferences, constraints, and unresolved questions.
 Do NOT include small talk, greetings, or filler.
 Do NOT speculate or add new information.
-Write in plain, compact sentences.`;
+Write in plain, compact sentences.
+IMPORTANT: Keep the summary under 600 characters.`;
 
       let userPrompt;
       if (context.summary) {
@@ -311,8 +312,8 @@ Write in plain, compact sentences.`;
           return;
         }
 
-        // Cap summary length to ~600 chars
-        const cappedSummary = summary.length > 600 ? summary.slice(0, 600) + '...' : summary;
+        // Cap summary length as safety fallback (model should already respect 600-char limit)
+        const cappedSummary = summary.length > 650 ? summary.slice(0, 600) + '...' : summary;
 
         // Update context with summary and keep only recent turns
         context.summary = cappedSummary;

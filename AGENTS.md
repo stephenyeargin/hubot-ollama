@@ -50,9 +50,9 @@ contexts[contextKey] = {
 **Summarization flow:**
 1. Check concurrency lock (`summarizationInProgress[contextKey]`)
 2. Extract turns: `turnsToSummarize = history.slice(0, -KEEP_RAW_TURNS)`
-3. Build prompt (first-time or rolling update)
+3. Build prompt (first-time or rolling update) with 600-char limit instruction
 4. Call Ollama with no tools, no streaming, with timeout
-5. Cap summary at ~600 chars
+5. Apply safety cap if model exceeds 650 chars (truncate to 600)
 6. Replace old turns with summary, keep recent turns
 7. Release lock
 
