@@ -194,6 +194,9 @@ hubot> Jupiter is the largest planet in our solar system.
 
 Context automatically expires after the configured TTL (default 10 minutes). Set `HUBOT_OLLAMA_CONTEXT_TTL_MS=0` to disable conversation memory entirely.
 
+**Automatic Token Optimization:**  
+For longer conversations, Hubot automatically summarizes older turns while keeping recent ones verbatim. This reduces token usage without changing behavior or requiring configuration. The last 2 turns are always kept in full, while earlier turns are condensed into a compact summary. This happens transparently in the background and never blocks responses.
+
 ## Ollama Cloud
 
 This package supports [Ollama's cloud service](https://ollama.com/cloud), which allows you to run larger models that wouldn't fit on your local machine. Cloud models are accessed via the same API but run on Ollama's infrastructure.

@@ -44,6 +44,7 @@ module.exports = (robot) => {
   const TIMEOUT_MS = Number.parseInt(process.env.HUBOT_OLLAMA_TIMEOUT_MS || '60000', 10);
   const CONTEXT_TTL_MS = Number.parseInt(process.env.HUBOT_OLLAMA_CONTEXT_TTL_MS || '600000', 10); // 10 minutes default
   const CONTEXT_TURNS = Math.max(1, Number.parseInt(process.env.HUBOT_OLLAMA_CONTEXT_TURNS || '5', 10));
+  const KEEP_RAW_TURNS = 2; // Number of recent turns to keep verbatim (not configurable)
   const RAW_SCOPE = (process.env.HUBOT_OLLAMA_CONTEXT_SCOPE || 'room-user').toLowerCase();
   const CONTEXT_SCOPE = (['room', 'room-user', 'thread'].includes(RAW_SCOPE)) ? RAW_SCOPE : 'room-user';
   const TOOLS_ENABLED = /^1|true|yes$/i.test(process.env.HUBOT_OLLAMA_TOOLS_ENABLED || 'true');
@@ -172,6 +173,9 @@ module.exports = (robot) => {
     robot.brain.set('ollamaContexts', {});
   }
 
+  // Initialize in-memory lock for summarization (not persisted)
+  const summarizationInProgress = {};
+
   // Get conversation context key for a user in a room
   const getThreadId = (msg) => {
     if (!msg || !msg.message) return null;
@@ -213,6 +217,128 @@ module.exports = (robot) => {
     };
   };
 
+  // Asynchronous summarization of old conversation turns
+  const summarizeContext = async (contextKey) => {
+    try {
+      // Check lock
+      if (summarizationInProgress[contextKey]) {
+        robot.logger.debug(`Summarization already in progress for key=${contextKey}`);
+        return;
+      }
+
+      // Acquire lock
+      summarizationInProgress[contextKey] = true;
+
+      const contexts = robot.brain.get('ollamaContexts') || {};
+      const context = contexts[contextKey];
+
+      if (!context || !context.history) {
+        delete summarizationInProgress[contextKey];
+        return;
+      }
+
+      // Check if there are enough turns to summarize
+      if (context.history.length <= KEEP_RAW_TURNS) {
+        delete summarizationInProgress[contextKey];
+        return;
+      }
+
+      const turnsToSummarize = context.history.slice(0, context.history.length - KEEP_RAW_TURNS);
+      const remainingTurns = context.history.slice(context.history.length - KEEP_RAW_TURNS);
+
+      if (turnsToSummarize.length < 2) {
+        // Need at least 2 old turns to justify summarization
+        delete summarizationInProgress[contextKey];
+        return;
+      }
+
+      robot.logger.info(`Starting summarization for key=${contextKey}: ${turnsToSummarize.length} turns to summarize, ${remainingTurns.length} kept raw`);
+
+      // Build summarization prompt
+      const systemPrompt = `You are summarizing a chat conversation for a future assistant.
+Preserve facts, decisions, user preferences, constraints, and unresolved questions.
+Do NOT include small talk, greetings, or filler.
+Do NOT speculate or add new information.
+Write in plain, compact sentences.`;
+
+      let userPrompt;
+      if (context.summary) {
+        // Rolling update: incorporate new turns into existing summary
+        const turnsText = turnsToSummarize.map(t => {
+          let userText = t.user;
+          if (CONTEXT_SCOPE === 'room' && t.userDisplayName) {
+            userText = `${t.userDisplayName}: ${t.user}`;
+          }
+          return `User: ${userText}\nAssistant: ${t.assistant}`;
+        }).join('\n\n');
+
+        userPrompt = `Previous summary:\n${context.summary}\n\nNew conversation turns:\n<turns>\n${turnsText}\n</turns>\n\nProduce an updated summary that incorporates the new information.`;
+      } else {
+        // First-time summarization
+        const turnsText = turnsToSummarize.map(t => {
+          let userText = t.user;
+          if (CONTEXT_SCOPE === 'room' && t.userDisplayName) {
+            userText = `${t.userDisplayName}: ${t.user}`;
+          }
+          return `User: ${userText}\nAssistant: ${t.assistant}`;
+        }).join('\n\n');
+
+        userPrompt = `Summarize the following conversation turns so that another assistant can continue the discussion naturally:\n\n<turns>\n${turnsText}\n</turns>`;
+      }
+
+      // Call Ollama for summarization (no tools, no streaming)
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+      try {
+        const response = await ollama.chat({
+          model: selectedModel,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          stream: false,
+          signal: controller.signal
+        });
+
+        clearTimeout(timeout);
+
+        const summary = response?.message?.content?.trim();
+
+        if (!summary || summary.length === 0) {
+          robot.logger.warn(`Summarization returned empty content for key=${contextKey}`);
+          delete summarizationInProgress[contextKey];
+          return;
+        }
+
+        // Cap summary length to ~600 chars
+        const cappedSummary = summary.length > 600 ? summary.slice(0, 600) + '...' : summary;
+
+        // Update context with summary and keep only recent turns
+        context.summary = cappedSummary;
+        context.history = remainingTurns;
+        context.summarizedUntil = Date.now();
+        context.lastUpdated = Date.now();
+
+        robot.brain.set('ollamaContexts', contexts);
+        robot.logger.info(`Summarization complete for key=${contextKey}: summary=${cappedSummary.length} chars, kept ${remainingTurns.length} raw turns`);
+      } catch (error) {
+        clearTimeout(timeout);
+        if (error.name === 'AbortError') {
+          robot.logger.warn(`Summarization timed out for key=${contextKey}`);
+        } else {
+          robot.logger.error(`Summarization failed for key=${contextKey}: ${error.message}`);
+        }
+        // On failure, leave history untouched
+      } finally {
+        delete summarizationInProgress[contextKey];
+      }
+    } catch (error) {
+      robot.logger.error(`Summarization error for key=${contextKey}: ${error.message}`);
+      delete summarizationInProgress[contextKey];
+    }
+  };
+
   const getContextKey = (msg) => {
     const userInfo = getUserInfo(msg);
     const roomId = (msg && msg.message && msg.message.room) || 'direct';
@@ -235,10 +361,11 @@ module.exports = (robot) => {
   };
 
   // Get conversation history for a user, cleaning up expired contexts
+  // Returns { history: [], summary: null }
   const getConversationHistory = (msg) => {
     if (CONTEXT_TTL_MS === 0) {
       robot.logger.debug('Conversation context disabled via HUBOT_OLLAMA_CONTEXT_TTL_MS=0');
-      return [];
+      return { history: [], summary: null };
     }
 
     const contexts = robot.brain.get('ollamaContexts') || {};
@@ -246,21 +373,24 @@ module.exports = (robot) => {
     const context = contexts[contextKey];
 
     if (!context) {
-      return [];
+      return { history: [], summary: null };
     }
 
     const now = Date.now();
     const age = now - context.lastUpdated;
 
     if (age > CONTEXT_TTL_MS) {
-      // Context has expired, clean it up
+      // Context has expired, clean it up (including summary)
       delete contexts[contextKey];
       robot.brain.set('ollamaContexts', contexts);
       robot.logger.debug(`Conversation context expired and cleared for key=${contextKey} ageMs=${age}`);
-      return [];
+      return { history: [], summary: null };
     }
 
-    return context.history || [];
+    return { 
+      history: context.history || [], 
+      summary: context.summary || null 
+    };
   };
 
   // Store conversation turn (user prompt and assistant response)
@@ -276,6 +406,8 @@ module.exports = (robot) => {
     if (!contexts[contextKey]) {
       contexts[contextKey] = {
         history: [],
+        summary: null,
+        summarizedUntil: null,
         lastUpdated: Date.now()
       };
     }
@@ -300,6 +432,22 @@ module.exports = (robot) => {
     contexts[contextKey].lastUpdated = Date.now();
     robot.brain.set('ollamaContexts', contexts);
     robot.logger.debug(`Stored conversation turn for key=${contextKey} historyLen=${contexts[contextKey].history.length} scope=${CONTEXT_SCOPE}`);
+
+    // Trigger summarization asynchronously if conditions are met
+    // Don't block the main response on this
+    setImmediate(() => {
+      const shouldSummarize = (
+        contexts[contextKey].history.length > KEEP_RAW_TURNS &&
+        contexts[contextKey].history.length > 2 &&
+        !summarizationInProgress[contextKey]
+      );
+
+      if (shouldSummarize) {
+        summarizeContext(contextKey).catch(err => {
+          robot.logger.error(`Async summarization failed for key=${contextKey}: ${err.message}`);
+        });
+      }
+    });
   };
 
   const formatResponse = (response, msg) => {
@@ -440,15 +588,21 @@ module.exports = (robot) => {
 
   // Helper function to execute ollama API call with tool support
   // Workflow: (1) First call to determine tools if needed (2) Execute tool(s) (3) Second call to incorporate results
-  const askOllama = async (userPrompt, msg, conversationHistory = []) => {
+  const askOllama = async (userPrompt, msg, conversationHistory = [], conversationSummary = null) => {
     robot.logger.debug(`Calling Ollama API with model: ${selectedModel}`);
 
     // Build messages array for chat API
     const messages = [{ role: 'system', content: buildSystemPrompt(msg) }];
 
+    // Inject conversation summary if present
+    if (conversationSummary) {
+      messages.push({ role: 'system', content: `Conversation summary:\n${conversationSummary}` });
+      robot.logger.debug(`Injected conversation summary: ${conversationSummary.length} chars`);
+    }
+
     // Add conversation history if available
     if (conversationHistory.length > 0) {
-      robot.logger.debug(`Using conversation context with ${conversationHistory.length} previous turns`);
+      robot.logger.debug(`Using conversation context with ${conversationHistory.length} recent turns`);
       for (const turn of conversationHistory) {
         // For room-scope contexts, prefix user message with the user's display name
         let userContent = turn.user;
@@ -1021,14 +1175,14 @@ module.exports = (robot) => {
       wasTruncated = true;
     }
 
-    // Get conversation history for this user/room
-    const conversationHistory = getConversationHistory(msg);
+    // Get conversation history and summary for this user/room
+    const { history: conversationHistory, summary: conversationSummary } = getConversationHistory(msg);
     let reactionAdded = false;
     try {
       // Try to add a thinking reaction while processing (adapter-aware)
       reactionAdded = await addThinkingReaction(msg, THINKING_EMOJI);
 
-      const response = await askOllama(sanitizedPrompt, msg, conversationHistory);
+      const response = await askOllama(sanitizedPrompt, msg, conversationHistory, conversationSummary);
 
       if (!response || !response.trim()) {
         msg.send(formatResponse('Error: Ollama returned an empty response.', msg));
