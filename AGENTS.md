@@ -27,6 +27,56 @@ This document provides a concise, actionable reference for building agentic beha
 4. Model responses are normalized and formatted for the adapter (Slack).
 5. Errors are captured and converted into user-friendly messages.
 
+### Context Management & Summarization
+
+**Storage:** Conversation contexts are stored in `robot.brain` with TTL-based expiration.
+
+**Data model** (per context key):
+```javascript
+contexts[contextKey] = {
+  history: [...],          // Recent turns (verbatim)
+  summary: string | null,  // Summarized older turns
+  summarizedUntil: number, // Timestamp marker
+  lastUpdated: number      // For TTL expiration
+}
+```
+
+**Automatic summarization:**
+- Keeps last 2 turns verbatim (`KEEP_RAW_TURNS = 2`, not configurable)
+- Summarizes older turns when `history.length > 2` and conditions met
+- Triggered async via `setImmediate()` in `storeConversationTurn()`
+- Never blocks user responses; degrades gracefully on failure
+
+**Summarization flow:**
+1. Check concurrency lock (`summarizationInProgress[contextKey]`)
+2. Extract turns: `turnsToSummarize = history.slice(0, -KEEP_RAW_TURNS)`
+3. Build prompt (first-time or rolling update)
+4. Call Ollama with no tools, no streaming, with timeout
+5. Cap summary at ~600 chars
+6. Replace old turns with summary, keep recent turns
+7. Release lock
+
+**Prompt assembly:**
+```javascript
+messages = [
+  { role: 'system', content: systemPrompt },
+  { role: 'system', content: `Conversation summary:\n${summary}` }, // if present
+  ...recentTurns,  // last 2 turns verbatim
+  { role: 'user', content: currentPrompt }
+]
+```
+
+**Key functions:**
+- `summarizeContext(contextKey)`: async, handles summarization with error recovery
+- `getConversationHistory(msg)`: returns `{ history, summary }`
+- `storeConversationTurn(msg, userPrompt, assistantResponse)`: triggers summarization
+
+**Safety:**
+- Concurrency lock prevents double-summarization
+- Empty summaries are skipped
+- Timeout/error → leave history untouched
+- TTL expiration clears everything (summary + history)
+
 ## Agent Capabilities (today)
 - Chat/inference: call local Ollama models via `ollama-client`.
 - Web retrieval: search then fetch content for grounding.
