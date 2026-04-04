@@ -1,4 +1,21 @@
 const tools = {};
+const JSON_SCHEMA_TYPES = new Set(['object', 'array', 'string', 'number', 'integer', 'boolean', 'null']);
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isJsonSchemaObject(rawParams) {
+  if (!isPlainObject(rawParams)) return false;
+  if (typeof rawParams.type !== 'string' || !JSON_SCHEMA_TYPES.has(rawParams.type)) return false;
+
+  // For object schemas, `properties` must be an object when present.
+  if (rawParams.type === 'object' && Object.prototype.hasOwnProperty.call(rawParams, 'properties')) {
+    return isPlainObject(rawParams.properties);
+  }
+
+  return true;
+}
 
 /**
  * Register Available Tools
@@ -18,9 +35,17 @@ module.exports = {
       throw new Error(`Tool "${name}" must provide a description`);
     }
 
+    // Normalize parameters to JSON Schema object shape: { type, properties, required? }.
+    // Tools that pass a flat { fieldName: { type, description } } map get wrapped automatically.
+    const rawParams = definition.parameters || {};
+    const parameters = isJsonSchemaObject(rawParams)
+      ? rawParams
+      : { type: 'object', properties: rawParams };
+
     tools[name] = {
       name,
-      ...definition
+      ...definition,
+      parameters
     };
   },
 

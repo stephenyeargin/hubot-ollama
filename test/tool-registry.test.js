@@ -130,6 +130,46 @@ describe('Tool Registry', () => {
       expect(tools).toHaveProperty('complex_tool');
       expect(tools.complex_tool.parameters).toEqual(complexTool.parameters);
     });
+
+    it('should wrap flat parameter maps even when they include an argument named type', () => {
+      const flatParamsWithTypeArg = {
+        name: 'flat_params_type_arg_tool',
+        description: 'Tool with a flat map that includes a type field argument',
+        parameters: {
+          type: { type: 'string', description: 'Resource type argument' },
+          q: { type: 'string', description: 'Query text' }
+        },
+        handler: async (args) => ({ result: args })
+      };
+
+      registry.registerTool('flat_params_type_arg_tool', flatParamsWithTypeArg);
+      const tools = registry.getTools();
+
+      expect(tools.flat_params_type_arg_tool.parameters).toEqual({
+        type: 'object',
+        properties: flatParamsWithTypeArg.parameters
+      });
+    });
+
+    it('should wrap flat parameter maps even when they include an argument named properties', () => {
+      const flatParamsWithPropertiesArg = {
+        name: 'flat_params_properties_arg_tool',
+        description: 'Tool with a flat map that includes a properties field argument',
+        parameters: {
+          properties: { type: 'string', description: 'Properties argument' },
+          q: { type: 'string', description: 'Query text' }
+        },
+        handler: async (args) => ({ result: args })
+      };
+
+      registry.registerTool('flat_params_properties_arg_tool', flatParamsWithPropertiesArg);
+      const tools = registry.getTools();
+
+      expect(tools.flat_params_properties_arg_tool.parameters).toEqual({
+        type: 'object',
+        properties: flatParamsWithPropertiesArg.parameters
+      });
+    });
   });
 
   describe('Tool Execution', () => {
