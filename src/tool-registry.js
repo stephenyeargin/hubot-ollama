@@ -18,9 +18,17 @@ module.exports = {
       throw new Error(`Tool "${name}" must provide a description`);
     }
 
+    // Normalize parameters to JSON Schema object shape: { type, properties, required? }
+    // Tools that pass a flat { fieldName: { type, description } } map get wrapped automatically.
+    const rawParams = definition.parameters || {};
+    const parameters = (rawParams.type || rawParams.properties)
+      ? rawParams
+      : { type: 'object', properties: rawParams };
+
     tools[name] = {
       name,
-      ...definition
+      ...definition,
+      parameters
     };
   },
 
