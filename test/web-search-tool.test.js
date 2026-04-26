@@ -1,9 +1,14 @@
 const ollamaClient = require('../src/tools/ollama-client');
 const webSearchTool = require('../src/tools/web-search-tool');
 
-jest.mock('../src/tools/ollama-client');
-
 describe('web-search-tool', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(ollamaClient, 'runWebSearch');
+    vi.spyOn(ollamaClient, 'runWebFetchMany');
+    vi.spyOn(ollamaClient, 'buildWebContextMessage');
+  });
+
   test('tool definition includes required properties', () => {
     const mockOllama = {};
     const config = {
@@ -12,7 +17,7 @@ describe('web-search-tool', () => {
       WEB_FETCH_CONCURRENCY: 3,
       WEB_TIMEOUT_MS: 45000
     };
-    const logger = { debug: jest.fn(), error: jest.fn() };
+    const logger = { debug: vi.fn(), error: vi.fn() };
 
     const tool = webSearchTool(mockOllama, config, logger);
 
@@ -31,7 +36,7 @@ describe('web-search-tool', () => {
       WEB_FETCH_CONCURRENCY: 3,
       WEB_TIMEOUT_MS: 45000
     };
-    const logger = { debug: jest.fn(), error: jest.fn() };
+    const logger = { debug: vi.fn(), error: vi.fn() };
 
     const tool = webSearchTool(mockOllama, config, logger);
     const result = await tool.handler({ query: '' }, {}, {});
@@ -48,7 +53,7 @@ describe('web-search-tool', () => {
       WEB_FETCH_CONCURRENCY: 3,
       WEB_TIMEOUT_MS: 45000
     };
-    const logger = { debug: jest.fn(), error: jest.fn() };
+    const logger = { debug: vi.fn(), error: vi.fn() };
 
     // Mock successful web search (NO fetch)
     ollamaClient.runWebSearch.mockResolvedValue([
@@ -89,7 +94,7 @@ describe('web-search-tool', () => {
       WEB_FETCH_CONCURRENCY: 3,
       WEB_TIMEOUT_MS: 45000
     };
-    const logger = { debug: jest.fn(), error: jest.fn() };
+    const logger = { debug: vi.fn(), error: vi.fn() };
 
     // Mock successful web search
     ollamaClient.runWebSearch.mockResolvedValue([
@@ -112,7 +117,7 @@ describe('web-search-tool', () => {
       WEB_FETCH_CONCURRENCY: 3,
       WEB_TIMEOUT_MS: 45000
     };
-    const logger = { debug: jest.fn(), error: jest.fn() };
+    const logger = { debug: vi.fn(), error: vi.fn() };
 
     // Mock search failure
     ollamaClient.runWebSearch.mockRejectedValue(new Error('Search API failure'));
@@ -132,7 +137,7 @@ describe('web-search-tool', () => {
       WEB_FETCH_CONCURRENCY: 3,
       WEB_TIMEOUT_MS: 45000
     };
-    const logger = { debug: jest.fn(), error: jest.fn() };
+    const logger = { debug: vi.fn(), error: vi.fn() };
 
     // Mock empty results
     ollamaClient.runWebSearch.mockResolvedValue([]);
@@ -152,7 +157,7 @@ describe('web-search-tool', () => {
       WEB_FETCH_CONCURRENCY: 3,
       WEB_TIMEOUT_MS: 45000
     };
-    const logger = { debug: jest.fn(), error: jest.fn() };
+    const logger = { debug: vi.fn(), error: vi.fn() };
 
     // Mock search results to proceed past status
     ollamaClient.runWebSearch.mockResolvedValue([
@@ -167,7 +172,7 @@ describe('web-search-tool', () => {
 
     const msg = {
       message: { user: { id: 'U789' }, rawMessage: { ts: '456.789' } },
-      send: jest.fn(),
+      send: vi.fn(),
     };
 
     await tool.handler({ query: 'test' }, mockRobot, msg);

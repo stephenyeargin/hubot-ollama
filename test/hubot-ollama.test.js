@@ -1,5 +1,6 @@
-const Helper = require('hubot-test-helper');
 const nock = require('nock');
+
+const Helper = require('./helpers/hubot-helper');
 
 const helper = new Helper('./../src/hubot-ollama.js');
 
@@ -7,14 +8,14 @@ describe('hubot-ollama', () => {
   let room = null;
   const OLLAMA_HOST = 'http://127.0.0.1:11434';
 
-  beforeEach(() => {
+  beforeEach(async () => {
     process.env.HUBOT_OLLAMA_MODEL = 'llama3.2';
-    room = helper.createRoom();
+    room = await helper.createRoom();
 
     // Mock robot.logger methods
     // Support both 'warn' and 'warning' for compatibility with different Hubot versions
     ['debug', 'info', 'warn', 'warning', 'error'].forEach((method) => {
-      room.robot.logger[method] = jest.fn();
+      room.robot.logger[method] = vi.fn();
     });
 
     // Clean all HTTP mocks
@@ -69,11 +70,11 @@ describe('hubot-ollama', () => {
 
   describe('Basic Command Handling', () => {
     describe('ask hubot a question', () => {
-      beforeEach((done) => {
+      beforeEach(async () => {
         mockOllamaChat('The capital of France is Paris.');
 
         room.user.say('alice', 'hubot ask what is the capital of France?');
-        setTimeout(done, 150);
+        await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
       it('hubot responds with ollama output', () => {
@@ -93,9 +94,9 @@ describe('hubot-ollama', () => {
     });
 
     describe('ask hubot without a prompt', () => {
-      beforeEach((done) => {
+      beforeEach(async () => {
         room.user.say('alice', 'hubot ask   ');
-        setTimeout(done, 100);
+        await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
       it('hubot asks for a prompt', () => {
@@ -111,41 +112,37 @@ describe('hubot-ollama', () => {
     });
 
     describe('alternative command aliases', () => {
-      it('responds to ollama command', (done) => {
+      it('responds to ollama command', async () => {
         mockOllamaChat('Response using ollama command');
         room.user.say('alice', 'hubot ollama: test prompt');
-        setTimeout(() => {
-          expect(room.messages).toEqual([
-            ['alice', 'hubot ollama: test prompt'],
-            ['hubot', 'Response using ollama command'],
-          ]);
-          done();
-        }, 150);
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        expect(room.messages).toEqual([
+          ['alice', 'hubot ollama: test prompt'],
+          ['hubot', 'Response using ollama command'],
+        ]);
       });
 
-      it('responds to llm command', (done) => {
+      it('responds to llm command', async () => {
         mockOllamaChat('Response using llm command');
         room.user.say('alice', 'hubot llm another test');
-        setTimeout(() => {
-          expect(room.messages).toEqual([
-            ['alice', 'hubot llm another test'],
-            ['hubot', 'Response using llm command'],
-          ]);
-          done();
-        }, 150);
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        expect(room.messages).toEqual([
+          ['alice', 'hubot llm another test'],
+          ['hubot', 'Response using llm command'],
+        ]);
       });
     });
   });
 
   describe('Error Handling', () => {
     describe('ollama server unreachable', () => {
-      beforeEach((done) => {
+      beforeEach(async () => {
         const error = new Error('connect ECONNREFUSED 127.0.0.1:11434');
         error.code = 'ECONNREFUSED';
         mockOllamaChat('', { error });
 
         room.user.say('alice', 'hubot ask test question');
-        setTimeout(done, 150);
+        await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
       it('hubot responds with helpful error message', () => {
@@ -157,14 +154,14 @@ describe('hubot-ollama', () => {
     });
 
     describe('model not found', () => {
-      beforeEach((done) => {
+      beforeEach(async () => {
         mockOllamaChat('', {
           statusCode: 404,
           body: { error: 'model "llama3.2" not found' }
         });
 
         room.user.say('alice', 'hubot ask test question');
-        setTimeout(done, 150);
+        await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
       it('hubot responds with model error message', () => {
@@ -174,14 +171,14 @@ describe('hubot-ollama', () => {
     });
 
     describe('ollama API error', () => {
-      beforeEach((done) => {
+      beforeEach(async () => {
         mockOllamaChat('', {
           statusCode: 500,
           body: { error: 'Internal server error' }
         });
 
         room.user.say('alice', 'hubot ask test question');
-        setTimeout(done, 150);
+        await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
       it('hubot responds with error message', () => {
@@ -190,11 +187,11 @@ describe('hubot-ollama', () => {
     });
 
     describe('empty response from ollama', () => {
-      beforeEach((done) => {
+      beforeEach(async () => {
         mockOllamaChat('');
 
         room.user.say('alice', 'hubot ask test question');
-        setTimeout(done, 150);
+        await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
       it('hubot responds with empty response error', () => {
@@ -206,18 +203,18 @@ describe('hubot-ollama', () => {
     });
 
     describe('timeout handling', () => {
-      beforeEach((done) => {
+      beforeEach(async () => {
         // Recreate room to re-read env-backed constants
         room.destroy();
         process.env.HUBOT_OLLAMA_TIMEOUT_MS = '50';
-        room = helper.createRoom();
+        room = await helper.createRoom();
         ['debug', 'info', 'warning', 'error'].forEach((method) => {
-          room.robot.logger[method] = jest.fn();
+          room.robot.logger[method] = vi.fn();
         });
 
         mockOllamaChat('response', { timeout: 100 });
         room.user.say('alice', 'hubot ask slow');
-        setTimeout(done, 150);
+        await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
       afterEach(() => {
@@ -235,7 +232,7 @@ describe('hubot-ollama', () => {
 
   describe('Configuration', () => {
     describe("system prompt includes user's and bot's names by default", () => {
-      beforeEach((done) => {
+      beforeEach(async () => {
         // Ensure no custom system prompt overrides
         delete process.env.HUBOT_OLLAMA_SYSTEM_PROMPT;
 
@@ -250,7 +247,7 @@ describe('hubot-ollama', () => {
           });
 
         room.user.say('alice', 'hubot ask test');
-        setTimeout(done, 150);
+        await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
       it("adds user's and bot's names to system prompt when not overridden", () => {
@@ -258,15 +255,15 @@ describe('hubot-ollama', () => {
       });
     });
     describe('custom model', () => {
-      beforeEach((done) => {
+      beforeEach(async () => {
         // Need to recreate the room with the new env var
         room.destroy();
         process.env.HUBOT_OLLAMA_MODEL = 'mistral';
-        room = helper.createRoom();
+        room = await helper.createRoom();
 
         // Re-mock logger
         ['debug', 'info', 'warning', 'error'].forEach((method) => {
-          room.robot.logger[method] = jest.fn();
+          room.robot.logger[method] = vi.fn();
         });
 
         nock(OLLAMA_HOST)
@@ -277,7 +274,7 @@ describe('hubot-ollama', () => {
           });
 
         room.user.say('alice', 'hubot ask test');
-        setTimeout(done, 150);
+        await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
       it('uses custom model', () => {
@@ -290,12 +287,12 @@ describe('hubot-ollama', () => {
     });
 
     describe('invalid model name falls back to default', () => {
-      beforeEach((done) => {
+      beforeEach(async () => {
         room.destroy();
         process.env.HUBOT_OLLAMA_MODEL = 'mistral; rm -rf /';
-        room = helper.createRoom();
+        room = await helper.createRoom();
         ['debug', 'info', 'warning', 'error'].forEach((method) => {
-          room.robot.logger[method] = jest.fn();
+          room.robot.logger[method] = vi.fn();
         });
 
         nock(OLLAMA_HOST)
@@ -306,7 +303,7 @@ describe('hubot-ollama', () => {
           });
 
         room.user.say('alice', 'hubot ask hi');
-        setTimeout(done, 150);
+        await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
       it('uses default model name', () => {
@@ -315,12 +312,12 @@ describe('hubot-ollama', () => {
     });
 
     describe('custom system prompt', () => {
-      beforeEach((done) => {
+      beforeEach(async () => {
         room.destroy();
         process.env.HUBOT_OLLAMA_SYSTEM_PROMPT = 'You are a helpful assistant. Be concise.';
-        room = helper.createRoom();
+        room = await helper.createRoom();
         ['debug', 'info', 'warning', 'error'].forEach((method) => {
-          room.robot.logger[method] = jest.fn();
+          room.robot.logger[method] = vi.fn();
         });
 
         nock(OLLAMA_HOST)
@@ -331,7 +328,7 @@ describe('hubot-ollama', () => {
           });
 
         room.user.say('alice', 'hubot ask test');
-        setTimeout(done, 150);
+        await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
       it('replaces default instructions with custom after base facts', () => {
@@ -351,11 +348,11 @@ describe('hubot-ollama', () => {
 
     describe('prompt length limit', () => {
       const longText = 'x'.repeat(2100);
-      beforeEach((done) => {
+      beforeEach(async () => {
         process.env.HUBOT_OLLAMA_MAX_PROMPT_CHARS = '2000';
         mockOllamaChat('ok');
         room.user.say('alice', `hubot ask ${longText}`);
-        setTimeout(done, 200);
+        await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
       afterEach(() => {
@@ -374,12 +371,12 @@ describe('hubot-ollama', () => {
 
     describe('custom ollama host', () => {
       const customHost = 'http://custom-ollama:11434';
-      beforeEach((done) => {
+      beforeEach(async () => {
         room.destroy();
         process.env.HUBOT_OLLAMA_HOST = customHost;
-        room = helper.createRoom();
+        room = await helper.createRoom();
         ['debug', 'info', 'warning', 'error'].forEach((method) => {
-          room.robot.logger[method] = jest.fn();
+          room.robot.logger[method] = vi.fn();
         });
 
         nock(customHost)
@@ -390,7 +387,7 @@ describe('hubot-ollama', () => {
           });
 
         room.user.say('alice', 'hubot ask test');
-        setTimeout(done, 150);
+        await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
       afterEach(() => {
@@ -406,14 +403,14 @@ describe('hubot-ollama', () => {
       const cloudHost = 'https://ollama.com';
       const apiKey = 'test-api-key-12345';
 
-      beforeEach((done) => {
+      beforeEach(async () => {
         room.destroy();
         process.env.HUBOT_OLLAMA_HOST = cloudHost;
         process.env.HUBOT_OLLAMA_API_KEY = apiKey;
         process.env.HUBOT_OLLAMA_MODEL = 'gpt-oss:120b';
-        room = helper.createRoom();
+        room = await helper.createRoom();
         ['debug', 'info', 'warning', 'error'].forEach((method) => {
-          room.robot.logger[method] = jest.fn();
+          room.robot.logger[method] = vi.fn();
         });
 
         nock(cloudHost)
@@ -425,7 +422,7 @@ describe('hubot-ollama', () => {
           });
 
         room.user.say('alice', 'hubot ask test cloud');
-        setTimeout(done, 150);
+        await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
       afterEach(() => {
@@ -448,10 +445,10 @@ describe('hubot-ollama', () => {
 
   describe('Security', () => {
     describe('API-based approach security', () => {
-      beforeEach((done) => {
+      beforeEach(async () => {
         mockOllamaChat('Safe output');
         room.user.say('alice', 'hubot ask tell me something; rm -rf / && `uname` $(whoami) | cat /etc/passwd');
-        setTimeout(done, 150);
+        await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
       it('safely handles malicious-looking input via JSON API', () => {
@@ -461,7 +458,7 @@ describe('hubot-ollama', () => {
     });
 
     describe('control character sanitization', () => {
-      beforeEach((done) => {
+      beforeEach(async () => {
         nock(OLLAMA_HOST)
           .post('/api/chat', (body) => {
             // Check that control chars are stripped from user message
@@ -475,7 +472,7 @@ describe('hubot-ollama', () => {
 
         // Include various control characters
         room.user.say('alice', 'hubot ask test\x00\x01\x02\x03prompt');
-        setTimeout(done, 150);
+        await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
       it('strips control characters from prompt', () => {
@@ -524,9 +521,9 @@ describe('hubot-ollama', () => {
         room.destroy();
         process.env.HUBOT_OLLAMA_CONTEXT_SCOPE = 'room';
         process.env.HUBOT_OLLAMA_CONTEXT_TURNS = '5';
-        room = helper.createRoom();
+        room = await helper.createRoom();
         ['debug', 'info', 'warning', 'error'].forEach((method) => {
-          room.robot.logger[method] = jest.fn();
+          room.robot.logger[method] = vi.fn();
         });
 
         nock(OLLAMA_HOST)
@@ -595,9 +592,9 @@ describe('hubot-ollama', () => {
       beforeEach(async () => {
         room.destroy();
         process.env.HUBOT_OLLAMA_CONTEXT_SCOPE = 'thread';
-        room = helper.createRoom();
+        room = await helper.createRoom();
         ['debug', 'info', 'warning', 'error'].forEach((method) => {
-          room.robot.logger[method] = jest.fn();
+          room.robot.logger[method] = vi.fn();
         });
 
         nock(OLLAMA_HOST)
@@ -631,9 +628,9 @@ describe('hubot-ollama', () => {
       beforeEach(async () => {
         room.destroy();
         process.env.HUBOT_OLLAMA_CONTEXT_TTL_MS = '100'; // 100ms TTL
-        room = helper.createRoom();
+        room = await helper.createRoom();
         ['debug', 'info', 'warning', 'error'].forEach((method) => {
-          room.robot.logger[method] = jest.fn();
+          room.robot.logger[method] = vi.fn();
         });
 
         nock(OLLAMA_HOST)
@@ -677,9 +674,9 @@ describe('hubot-ollama', () => {
       beforeEach(async () => {
         room.destroy();
         process.env.HUBOT_OLLAMA_CONTEXT_TTL_MS = '0'; // Disable context
-        room = helper.createRoom();
+        room = await helper.createRoom();
         ['debug', 'info', 'warning', 'error'].forEach((method) => {
-          room.robot.logger[method] = jest.fn();
+          room.robot.logger[method] = vi.fn();
         });
 
         nock(OLLAMA_HOST)
@@ -713,9 +710,9 @@ describe('hubot-ollama', () => {
       it('respects CONTEXT_TURNS configuration', async () => {
         room.destroy();
         process.env.HUBOT_OLLAMA_CONTEXT_TURNS = '3';
-        room = helper.createRoom();
+        room = await helper.createRoom();
         ['debug', 'info', 'warning', 'error'].forEach((method) => {
-          room.robot.logger[method] = jest.fn();
+          room.robot.logger[method] = vi.fn();
         });
 
         mockOllamaChat('ok');
@@ -737,9 +734,9 @@ describe('hubot-ollama', () => {
       beforeEach(async () => {
         room.destroy();
         process.env.HUBOT_OLLAMA_CONTEXT_SCOPE = 'thread';
-        room = helper.createRoom({ httpd: false });
+        room = await helper.createRoom({ httpd: false });
         ['debug', 'info', 'warning', 'error'].forEach((method) => {
-          room.robot.logger[method] = jest.fn();
+          room.robot.logger[method] = vi.fn();
         });
 
         mockOllamaChat('Thread response');
@@ -770,9 +767,9 @@ describe('hubot-ollama', () => {
       beforeEach(async () => {
         room.destroy();
         process.env.HUBOT_OLLAMA_CONTEXT_SCOPE = 'room-user';
-        room = helper.createRoom();
+        room = await helper.createRoom();
         ['debug', 'info', 'warning', 'error'].forEach((method) => {
-          room.robot.logger[method] = jest.fn();
+          room.robot.logger[method] = vi.fn();
         });
 
         mockOllamaChat('Response in main channel');
@@ -800,9 +797,9 @@ describe('hubot-ollama', () => {
         room.destroy();
         process.env.HUBOT_OLLAMA_CONTEXT_SCOPE = 'room';
         process.env.HUBOT_OLLAMA_CONTEXT_TURNS = '5';
-        room = helper.createRoom();
+        room = await helper.createRoom();
         ['debug', 'info', 'warning', 'error'].forEach((method) => {
-          room.robot.logger[method] = jest.fn();
+          room.robot.logger[method] = vi.fn();
         });
 
         nock(OLLAMA_HOST)
@@ -876,9 +873,9 @@ describe('hubot-ollama', () => {
         room.destroy();
         delete process.env.HUBOT_OLLAMA_CONTEXT_SCOPE;
         process.env.HUBOT_OLLAMA_CONTEXT_SCOPE = 'room-user';
-        room = helper.createRoom();
+        room = await helper.createRoom();
         ['debug', 'info', 'warning', 'error'].forEach((method) => {
-          room.robot.logger[method] = jest.fn();
+          room.robot.logger[method] = vi.fn();
         });
 
         mockOllamaChat('Answer');
@@ -917,9 +914,9 @@ describe('hubot-ollama', () => {
       it('uses fallback values when real_name is not available', async () => {
         room.destroy();
         process.env.HUBOT_OLLAMA_CONTEXT_SCOPE = 'room';
-        room = helper.createRoom();
+        room = await helper.createRoom();
         ['debug', 'info', 'warning', 'error'].forEach((method) => {
-          room.robot.logger[method] = jest.fn();
+          room.robot.logger[method] = vi.fn();
         });
 
         mockOllamaChat('Answer');

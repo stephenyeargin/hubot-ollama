@@ -32,7 +32,7 @@ const baseRules = {
 export default [
   // Global ignores
   {
-    ignores: ['node_modules/**', 'test-results/**', 'eslint.config.*'],
+    ignores: ['node_modules/**', 'test-results/**', 'eslint.config.*', 'vitest.config.*'],
   },
   // Environments and parser options
   {
@@ -44,7 +44,7 @@ export default [
       },
       globals: {
         ...globals.node,
-        ...globals.jest,
+        ...globals.vitest,
       },
     },
   },
@@ -67,7 +67,7 @@ export default [
     files: ['test/**'],
     languageOptions: {
       globals: {
-        ...globals.jest,
+        ...globals.vitest,
       },
     },
     rules: {

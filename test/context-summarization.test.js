@@ -13,13 +13,13 @@ describe('Context Summarization', () => {
       name: 'testbot',
       adapterName: 'test',
       logger: {
-        debug: jest.fn(),
-        info: jest.fn(),
-        warn: jest.fn(),
-        error: jest.fn()
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn()
       },
       brain,
-      respond: jest.fn()
+      respond: vi.fn()
     };
 
     // Initialize empty contexts
@@ -31,7 +31,7 @@ describe('Context Summarization', () => {
   });
 
   afterEach(() => {
-    jest.restoreAllMocks();
+    vi.restoreAllMocks();
     delete process.env.HUBOT_OLLAMA_CONTEXT_TTL_MS;
     delete process.env.HUBOT_OLLAMA_CONTEXT_TURNS;
   });
@@ -183,11 +183,10 @@ describe('Context Summarization', () => {
     expect(expectedPrompt).toContain('What about TypeScript?');
   });
 
-  it('should not block main response on summarization', (done) => {
+  it('should not block main response on summarization', async () => {
     // Simulate async summarization trigger
-    setImmediate(() => {
-      // Summarization happens in background
-      done();
+    await new Promise((resolve) => {
+      setImmediate(resolve);
     });
 
     // Main response continues immediately

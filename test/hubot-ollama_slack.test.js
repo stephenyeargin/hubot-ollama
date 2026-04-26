@@ -1,5 +1,6 @@
-const Helper = require('hubot-test-helper');
 const nock = require('nock');
+
+const Helper = require('./helpers/hubot-helper');
 
 const helper = new Helper([
   './adapters/slack.js',
@@ -10,13 +11,13 @@ describe('hubot-ollama slack', () => {
   let room = null;
   const OLLAMA_HOST = 'http://127.0.0.1:11434';
 
-  beforeEach(() => {
+  beforeEach(async () => {
     process.env.HUBOT_OLLAMA_MODEL = 'llama3.2';
-    room = helper.createRoom();
+    room = await helper.createRoom();
 
     // Mock robot.logger methods
     ['debug', 'info', 'warning', 'error'].forEach((method) => {
-      room.robot.logger[method] = jest.fn();
+      room.robot.logger[method] = vi.fn();
     });
 
     // Clean all HTTP mocks
@@ -65,11 +66,11 @@ describe('hubot-ollama slack', () => {
 
   describe('Slack Formatting Handling', () => {
     describe('ask hubot a question', () => {
-      beforeEach((done) => {
+      beforeEach(async () => {
         mockOllamaChat('The capital of France is **Paris**.');
 
         room.user.say('alice', 'hubot ask what is the capital of France?');
-        setTimeout(done, 150);
+        await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
       it('hubot responds with ollama output', () => {

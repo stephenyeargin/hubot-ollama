@@ -6,9 +6,9 @@ describe('JavaScript REPL Tool', () => {
 
   beforeEach(() => {
     mockLogger = {
-      debug: jest.fn(),
-      info: jest.fn(),
-      error: jest.fn()
+      debug: vi.fn(),
+      info: vi.fn(),
+      error: vi.fn()
     };
     tool = createJavaScriptReplTool(null, {}, mockLogger);
   });

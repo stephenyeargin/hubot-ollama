@@ -1,42 +1,46 @@
 const path = require('path');
 
-const Helper = require('hubot-test-helper');
+const mockRequire = require('mock-require');
+
+const Helper = require('./helpers/hubot-helper');
 
 // Mock Ollama with scripted responses to test intermediate thinking content
-jest.mock('ollama', () => {
-  let scriptedResponses = [];
-  let callIndex = 0;
+let scriptedResponses = [];
+let callIndex = 0;
 
-  class MockOllama {
-    constructor() {}
-    async show() {
-      return { capabilities: ['tools', 'completion'] };
-    }
-    async chat() {
-      const response = scriptedResponses[callIndex] || { message: { role: 'assistant', content: '' } };
-      callIndex++;
-      return response;
-    }
+class MockOllama {
+  constructor() {}
+  async show() {
+    return { capabilities: ['tools', 'completion'] };
   }
+  async chat() {
+    const response = scriptedResponses[callIndex] || { message: { role: 'assistant', content: '' } };
+    callIndex++;
+    return response;
+  }
+}
 
-  MockOllama.__setResponses = (responses) => {
-    scriptedResponses = responses;
-    callIndex = 0;
-  };
+MockOllama.__setResponses = (responses) => {
+  scriptedResponses = responses;
+  callIndex = 0;
+};
 
-  return { Ollama: MockOllama };
-});
+mockRequire('ollama', { Ollama: MockOllama });
 
 const helper = new Helper(path.join(__dirname, '..', 'src', 'hubot-ollama.js'));
 
 describe('hubot-ollama intermediate thinking responses', () => {
   let room;
 
-  beforeEach(() => {
+  afterAll(() => {
+    mockRequire.stop('ollama');
+  });
+
+  beforeEach(async () => {
     process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'true';
-    room = helper.createRoom();
+    room = await helper.createRoom();
     ['debug', 'info', 'warn', 'warning', 'error'].forEach((method) => {
-      room.robot.logger[method] = jest.fn();
+      room.robot.logger[method] = vi.fn();
     });
   });
 
