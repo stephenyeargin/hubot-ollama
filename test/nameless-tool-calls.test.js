@@ -1,80 +1,84 @@
 const path = require('path');
 
-const Helper = require('hubot-test-helper');
+const mockRequire = require('mock-require');
+
+const Helper = require('./helpers/hubot-helper');
 // Mock Ollama to simulate nameless tool calls with configurable scripted responses
-jest.mock('ollama', () => {
-  let scriptedResponses = null;
-  let showResponse = { capabilities: ['tools', 'completion'] };
+let scriptedResponses = null;
+let showResponse = { capabilities: ['tools', 'completion'] };
 
-  class MockOllama {
-    constructor() {
-      this._callCount = 0;
-    }
-    async show() {
-      return showResponse;
-    }
-    async chat() {
-      this._callCount += 1;
-      if (Array.isArray(scriptedResponses) && scriptedResponses[this._callCount - 1]) {
-        return scriptedResponses[this._callCount - 1];
-      }
-
-      // Default behavior used by the first test: nameless call with hint, then nameless again
-      if (this._callCount === 1) {
-        return {
-          message: {
-            role: 'assistant',
-            content: '',
-            tool_calls: [
-              {
-                id: 'call_1',
-                function: { index: 0, name: '', arguments: { parameters: {}, type: 'hubot_ollama_get_current_time' } }
-              }
-            ]
-          }
-        };
-      }
-      if (this._callCount === 2) {
-        return {
-          message: {
-            role: 'assistant',
-            content: '',
-            tool_calls: [
-              {
-                id: 'call_2',
-                function: { index: 0, name: '', arguments: {} }
-              }
-            ]
-          }
-        };
-      }
-      // Should bail before reaching here; return empty to catch regressions
-      return { message: { role: 'assistant', content: '' } };
-    }
+class MockOllama {
+  constructor() {
+    this._callCount = 0;
   }
+  async show() {
+    return showResponse;
+  }
+  async chat() {
+    this._callCount += 1;
+    if (Array.isArray(scriptedResponses) && scriptedResponses[this._callCount - 1]) {
+      return scriptedResponses[this._callCount - 1];
+    }
 
-  MockOllama.__setChatResponses = (responses) => {
-    scriptedResponses = responses;
-  };
+    // Default behavior used by the first test: nameless call with hint, then nameless again
+    if (this._callCount === 1) {
+      return {
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: 'call_1',
+              function: { index: 0, name: '', arguments: { parameters: {}, type: 'hubot_ollama_get_current_time' } }
+            }
+          ]
+        }
+      };
+    }
+    if (this._callCount === 2) {
+      return {
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: 'call_2',
+              function: { index: 0, name: '', arguments: {} }
+            }
+          ]
+        }
+      };
+    }
+    // Should bail before reaching here; return empty to catch regressions
+    return { message: { role: 'assistant', content: '' } };
+  }
+}
 
-  MockOllama.__setShowResponse = (resp) => {
-    showResponse = resp;
-  };
+MockOllama.__setChatResponses = (responses) => {
+  scriptedResponses = responses;
+};
 
-  return { Ollama: MockOllama };
-});
+MockOllama.__setShowResponse = (resp) => {
+  showResponse = resp;
+};
+
+mockRequire('ollama', { Ollama: MockOllama });
 
 const helper = new Helper(path.join(__dirname, '..', 'src', 'hubot-ollama.js'));
 
 describe('hubot-ollama nameless tool call bail-out', () => {
   let room;
 
-  beforeEach(() => {
+  afterAll(() => {
+    mockRequire.stop('ollama');
+  });
+
+  beforeEach(async () => {
     process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'true';
-    room = helper.createRoom();
+    room = await helper.createRoom();
     // Mock logger to avoid console spam during tests
     ['debug', 'info', 'warn', 'warning', 'error'].forEach((method) => {
-      room.robot.logger[method] = jest.fn();
+      room.robot.logger[method] = vi.fn();
     });
   });
 

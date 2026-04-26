@@ -5,7 +5,7 @@ describe('hubot-compat', () => {
     describe('when logger has warn but not warning', () => {
       it('aliases warning to warn', () => {
         const logger = {
-          warn: jest.fn()
+          warn: vi.fn()
         };
 
         shimWarnMethod(logger);
@@ -22,7 +22,7 @@ describe('hubot-compat', () => {
     describe('when logger has warning but not warn', () => {
       it('aliases warn to warning', () => {
         const logger = {
-          warning: jest.fn()
+          warning: vi.fn()
         };
 
         shimWarnMethod(logger);
@@ -38,8 +38,8 @@ describe('hubot-compat', () => {
 
     describe('when logger has both warn and warning', () => {
       it('does not override existing methods', () => {
-        const warnFn = jest.fn();
-        const warningFn = jest.fn();
+        const warnFn = vi.fn();
+        const warningFn = vi.fn();
         const logger = {
           warn: warnFn,
           warning: warningFn
@@ -68,7 +68,7 @@ describe('hubot-compat', () => {
   describe('applyLoggerShims', () => {
     it('applies shimWarnMethod', () => {
       const logger = {
-        warn: jest.fn()
+        warn: vi.fn()
       };
 
       applyLoggerShims(logger);
@@ -79,10 +79,10 @@ describe('hubot-compat', () => {
 
     it('handles complete logger object', () => {
       const logger = {
-        debug: jest.fn(),
-        info: jest.fn(),
-        warn: jest.fn(),
-        error: jest.fn()
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn()
       };
 
       applyLoggerShims(logger);
@@ -99,7 +99,7 @@ describe('hubot-compat', () => {
   describe('backwards compatibility', () => {
     it('allows old code using warning() to work with new logger', () => {
       const logger = {
-        warn: jest.fn()
+        warn: vi.fn()
       };
 
       shimWarnMethod(logger);
@@ -111,7 +111,7 @@ describe('hubot-compat', () => {
 
     it('allows new code using warn() to work with old logger', () => {
       const logger = {
-        warning: jest.fn()
+        warning: vi.fn()
       };
 
       shimWarnMethod(logger);
@@ -126,12 +126,12 @@ describe('hubot-compat', () => {
     it('works with Pino-like logger (newer Hubot)', () => {
       // Simulate Pino logger which has warn()
       const logger = {
-        debug: jest.fn(),
-        info: jest.fn(),
-        warn: jest.fn(),
-        error: jest.fn(),
-        fatal: jest.fn(),
-        trace: jest.fn()
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        fatal: vi.fn(),
+        trace: vi.fn()
       };
 
       applyLoggerShims(logger);
@@ -149,10 +149,10 @@ describe('hubot-compat', () => {
     it('works with old logger implementation (older Hubot)', () => {
       // Simulate older logger which has warning()
       const logger = {
-        debug: jest.fn(),
-        info: jest.fn(),
-        warning: jest.fn(),
-        error: jest.fn()
+        debug: vi.fn(),
+        info: vi.fn(),
+        warning: vi.fn(),
+        error: vi.fn()
       };
 
       applyLoggerShims(logger);
@@ -171,7 +171,7 @@ describe('hubot-compat', () => {
   describe('idempotency', () => {
     it('can be called multiple times safely', () => {
       const logger = {
-        warn: jest.fn()
+        warn: vi.fn()
       };
 
       applyLoggerShims(logger);

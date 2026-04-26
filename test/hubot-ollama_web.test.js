@@ -1,98 +1,104 @@
 const path = require('path');
 
-const Helper = require('hubot-test-helper');
+const mockRequire = require('mock-require');
 
 const registry = require('../src/tool-registry');
 
-jest.mock('ollama', () => {
-  class MockOllama {
-    constructor() {}
-    async show({ }) {
-      return { capabilities: ['tools'] };
-    }
-    async chat(req) {
-      const last = req.messages[req.messages.length - 1];
+const Helper = require('./helpers/hubot-helper');
 
-      // If tools are available and this is not a tool result follow-up, and web search tool is available, simulate tool call
-      const hasWebSearchTool = req.tools && req.tools.some(t => (t.function && t.function.name) === 'hubot_ollama_web_search');
-      const hasWebFetchTool = req.tools && req.tools.some(t => (t.function && t.function.name) === 'hubot_ollama_web_fetch');
 
-      if (req.tools && req.tools.length > 0 && hasWebSearchTool && !req.messages.some(m => m.role === 'user' && typeof m.content === 'string' && /^{/.test(m.content))) {
-        // Simulate the model choosing the web search tool
-        return {
-          message: {
-            content: 'I will search for information',
-            tool_calls: [{
-              function: {
-                name: 'hubot_ollama_web_search',
-                arguments: { prompt: last.content || 'search' }
-              }
-            }]
-          }
-        };
-      }
+class MockOllama {
+  constructor() {}
+  async show({ }) {
+    return { capabilities: ['tools'] };
+  }
+  async chat(req) {
+    const last = req.messages[req.messages.length - 1];
 
-      // If this is a tool result message (JSON content from user), check what was returned
-      if (last && last.content && /^{/.test(last.content)) {
-        try {
-          const result = JSON.parse(last.content);
-          // New behavior: web search returns results, web fetch returns pages
-          if (result.results && hasWebFetchTool) {
-            // Simulate model selecting fetch tool after search
-            return {
-              message: {
-                content: 'I will now fetch the content',
-                tool_calls: [{
-                  function: {
-                    name: 'hubot_ollama_web_fetch',
-                    arguments: { urls: [result.results[0].url] }
-                  }
-                }]
-              }
-            };
-          }
-          if (result.pages || result.results) {
-            return { message: { content: 'Answer with web context' } };
-          }
-        // eslint-disable-next-line no-unused-vars
-        } catch (e) {
-          // Ignore JSON parse errors in mock
-        }
-      }
+    // If tools are available and this is not a tool result follow-up, and web search tool is available, simulate tool call
+    const hasWebSearchTool = req.tools && req.tools.some(t => (t.function && t.function.name) === 'hubot_ollama_web_search');
+    const hasWebFetchTool = req.tools && req.tools.some(t => (t.function && t.function.name) === 'hubot_ollama_web_fetch');
 
-      // Default fallback
-      return { message: { content: 'Answer without web context' } };
-    }
-    async webSearch({ max_results }) {
+    if (req.tools && req.tools.length > 0 && hasWebSearchTool && !req.messages.some(m => m.role === 'user' && typeof m.content === 'string' && /^{/.test(m.content))) {
+      // Simulate the model choosing the web search tool
       return {
-        results: [
-          { title: 'Node v24.10.0', url: 'https://nodejs.org/en/blog/release/v24.10.0', content: 'Node release notes snippet' },
-          { title: 'Changelog', url: 'https://example.com/changelog', content: 'Project changelog summary' },
-        ].slice(0, max_results || 5)
+        message: {
+          content: 'I will search for information',
+          tool_calls: [{
+            function: {
+              name: 'hubot_ollama_web_search',
+              arguments: { prompt: last.content || 'search' }
+            }
+          }]
+        }
       };
     }
-    async webFetch({ url }) {
-      if (/example.com\/changelog/.test(url)) {
-        throw new Error('Network error');
+
+    // If this is a tool result message (JSON content from user), check what was returned
+    if (last && last.content && /^{/.test(last.content)) {
+      try {
+        const result = JSON.parse(last.content);
+        // New behavior: web search returns results, web fetch returns pages
+        if (result.results && hasWebFetchTool) {
+          // Simulate model selecting fetch tool after search
+          return {
+            message: {
+              content: 'I will now fetch the content',
+              tool_calls: [{
+                function: {
+                  name: 'hubot_ollama_web_fetch',
+                  arguments: { urls: [result.results[0].url] }
+                }
+              }]
+            }
+          };
+        }
+        if (result.pages || result.results) {
+          return { message: { content: 'Answer with web context' } };
+        }
+      // eslint-disable-next-line no-unused-vars
+      } catch (e) {
+        // Ignore JSON parse errors in mock
       }
-      return { text: `Content for ${url}` };
     }
+
+    // Default fallback
+    return { message: { content: 'Answer without web context' } };
   }
-  return { Ollama: MockOllama };
-});
+  async webSearch({ max_results }) {
+    return {
+      results: [
+        { title: 'Node v24.10.0', url: 'https://nodejs.org/en/blog/release/v24.10.0', content: 'Node release notes snippet' },
+        { title: 'Changelog', url: 'https://example.com/changelog', content: 'Project changelog summary' },
+      ].slice(0, max_results || 5)
+    };
+  }
+  async webFetch({ url }) {
+    if (/example.com\/changelog/.test(url)) {
+      throw new Error('Network error');
+    }
+    return { text: `Content for ${url}` };
+  }
+}
+
+mockRequire('ollama', { Ollama: MockOllama });
 
 const helper = new Helper(path.join(__dirname, '..', 'src', 'hubot-ollama.js'));
 
 describe('hubot-ollama web-enabled flow', () => {
   let room;
 
-  beforeEach(() => {
+  afterAll(() => {
+    mockRequire.stop('ollama');
+  });
+
+  beforeEach(async () => {
     process.env.HUBOT_OLLAMA_WEB_ENABLED = 'true';
     process.env.HUBOT_OLLAMA_API_KEY = 'test-key';
-    room = helper.createRoom();
+    room = await helper.createRoom();
     // Mock robot.logger to avoid noisy output and allow call checks if needed
     ['debug', 'info', 'warning', 'error'].forEach((method) => {
-      room.robot.logger[method] = jest.fn();
+      room.robot.logger[method] = vi.fn();
     });
   });
 
@@ -120,9 +126,9 @@ describe('hubot-ollama web-enabled flow', () => {
     // Recreate room so WEB_ENABLED is re-read at module init time
     room.destroy();
     process.env.HUBOT_OLLAMA_WEB_ENABLED = 'false';
-    room = helper.createRoom();
+    room = await helper.createRoom();
     ['debug', 'info', 'warning', 'error'].forEach((method) => {
-      room.robot.logger[method] = jest.fn();
+      room.robot.logger[method] = vi.fn();
     });
     await room.user.say('alice', 'hubot ask summarize latest node release');
     await new Promise((resolve) => setTimeout(resolve, 200));

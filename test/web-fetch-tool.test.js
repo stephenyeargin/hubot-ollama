@@ -1,11 +1,10 @@
 const ollamaClient = require('../src/tools/ollama-client');
 const webFetchTool = require('../src/tools/web-fetch-tool');
 
-jest.mock('../src/tools/ollama-client');
-
 describe('web-fetch-tool', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.restoreAllMocks();
+    vi.spyOn(ollamaClient, 'runWebFetchMany');
   });
 
   test('tool definition includes required properties', () => {
@@ -16,7 +15,7 @@ describe('web-fetch-tool', () => {
       WEB_FETCH_CONCURRENCY: 3,
       WEB_TIMEOUT_MS: 45000
     };
-    const logger = { debug: jest.fn(), error: jest.fn(), warn: jest.fn() };
+    const logger = { debug: vi.fn(), error: vi.fn(), warn: vi.fn() };
 
     const tool = webFetchTool(mockOllama, config, logger);
 
@@ -36,10 +35,10 @@ describe('web-fetch-tool', () => {
       WEB_FETCH_CONCURRENCY: 3,
       WEB_TIMEOUT_MS: 45000
     };
-    const logger = { debug: jest.fn(), error: jest.fn(), warn: jest.fn() };
+    const logger = { debug: vi.fn(), error: vi.fn(), warn: vi.fn() };
 
     const tool = webFetchTool(mockOllama, config, logger);
-    const result = await tool.handler({ urls: [] }, { brain: { get: jest.fn(), set: jest.fn() } }, {});
+    const result = await tool.handler({ urls: [] }, { brain: { get: vi.fn(), set: vi.fn() } }, {});
 
     expect(result).toHaveProperty('error');
     expect(result.error).toBe('No URLs provided for fetching');
@@ -53,12 +52,12 @@ describe('web-fetch-tool', () => {
       WEB_FETCH_CONCURRENCY: 3,
       WEB_TIMEOUT_MS: 45000
     };
-    const logger = { debug: jest.fn(), error: jest.fn(), warn: jest.fn() };
+    const logger = { debug: vi.fn(), error: vi.fn(), warn: vi.fn() };
 
     const mockRobot = {
       brain: {
-        get: jest.fn(() => ({})),
-        set: jest.fn()
+        get: vi.fn(() => ({})),
+        set: vi.fn()
       }
     };
 
@@ -99,7 +98,7 @@ describe('web-fetch-tool', () => {
       WEB_FETCH_CONCURRENCY: 3,
       WEB_TIMEOUT_MS: 45000
     };
-    const logger = { debug: jest.fn(), error: jest.fn(), warn: jest.fn() };
+    const logger = { debug: vi.fn(), error: vi.fn(), warn: vi.fn() };
 
     // Setup robot with tracked URLs (use array, not Set)
     const invocationContextKey = 'test-invocation-789';
@@ -108,8 +107,8 @@ describe('web-fetch-tool', () => {
     };
     const mockRobot = {
       brain: {
-        get: jest.fn((key) => key === 'ollamaFetchedUrls' ? fetchedUrls : ({})),
-        set: jest.fn()
+        get: vi.fn((key) => key === 'ollamaFetchedUrls' ? fetchedUrls : ({})),
+        set: vi.fn()
       }
     };
 
@@ -136,7 +135,7 @@ describe('web-fetch-tool', () => {
       WEB_FETCH_CONCURRENCY: 3,
       WEB_TIMEOUT_MS: 45000
     };
-    const logger = { debug: jest.fn(), error: jest.fn(), warn: jest.fn() };
+    const logger = { debug: vi.fn(), error: vi.fn(), warn: vi.fn() };
 
     // Setup robot with one already-fetched URL (use array, not Set)
     const invocationContextKey = 'test-invocation-123';
@@ -145,8 +144,8 @@ describe('web-fetch-tool', () => {
     };
     const mockRobot = {
       brain: {
-        get: jest.fn((key) => key === 'ollamaFetchedUrls' ? fetchedUrls : ({})),
-        set: jest.fn()
+        get: vi.fn((key) => key === 'ollamaFetchedUrls' ? fetchedUrls : ({})),
+        set: vi.fn()
       }
     };
 
@@ -187,14 +186,14 @@ describe('web-fetch-tool', () => {
       WEB_FETCH_CONCURRENCY: 3,
       WEB_TIMEOUT_MS: 45000
     };
-    const logger = { debug: jest.fn(), error: jest.fn(), warn: jest.fn() };
+    const logger = { debug: vi.fn(), error: vi.fn(), warn: vi.fn() };
 
     const invocationContextKey = 'test-invocation-456';
     const fetchedUrls = {};
     const mockRobot = {
       brain: {
-        get: jest.fn((key) => key === 'ollamaFetchedUrls' ? fetchedUrls : ({})),
-        set: jest.fn()
+        get: vi.fn((key) => key === 'ollamaFetchedUrls' ? fetchedUrls : ({})),
+        set: vi.fn()
       }
     };
 
@@ -224,12 +223,12 @@ describe('web-fetch-tool', () => {
       WEB_FETCH_CONCURRENCY: 3,
       WEB_TIMEOUT_MS: 45000
     };
-    const logger = { debug: jest.fn(), error: jest.fn(), warn: jest.fn() };
+    const logger = { debug: vi.fn(), error: vi.fn(), warn: vi.fn() };
 
     const mockRobot = {
       brain: {
-        get: jest.fn(() => ({})),
-        set: jest.fn()
+        get: vi.fn(() => ({})),
+        set: vi.fn()
       }
     };
 
@@ -255,13 +254,13 @@ describe('web-fetch-tool', () => {
       WEB_FETCH_CONCURRENCY: 3,
       WEB_TIMEOUT_MS: 45000
     };
-    const logger = { debug: jest.fn(), error: jest.fn(), warn: jest.fn() };
+    const logger = { debug: vi.fn(), error: vi.fn(), warn: vi.fn() };
 
     const mockRobot = {
       adapterName: 'slack',
       brain: {
-        get: jest.fn(() => ({})),
-        set: jest.fn()
+        get: vi.fn(() => ({})),
+        set: vi.fn()
       }
     };
 
@@ -274,7 +273,7 @@ describe('web-fetch-tool', () => {
     const tool = webFetchTool(mockOllama, config, logger);
     const msg = {
       message: { user: { id: 'U123' }, rawMessage: { ts: '123.456' } },
-      send: jest.fn(),
+      send: vi.fn(),
     };
 
     await tool.handler(
@@ -303,13 +302,13 @@ describe('web-fetch-tool', () => {
       WEB_FETCH_CONCURRENCY: 3,
       WEB_TIMEOUT_MS: 45000
     };
-    const logger = { debug: jest.fn(), error: jest.fn(), warn: jest.fn() };
+    const logger = { debug: vi.fn(), error: vi.fn(), warn: vi.fn() };
 
     const mockRobot = {
       adapterName: 'shell',
       brain: {
-        get: jest.fn(() => ({})),
-        set: jest.fn()
+        get: vi.fn(() => ({})),
+        set: vi.fn()
       }
     };
 
@@ -320,8 +319,8 @@ describe('web-fetch-tool', () => {
     const tool = webFetchTool(mockOllama, config, logger);
     const msg = {
       // Provide send to satisfy status guard, reply used for non-Slack
-      send: jest.fn(),
-      reply: jest.fn(),
+      send: vi.fn(),
+      reply: vi.fn(),
     };
 
     await tool.handler(

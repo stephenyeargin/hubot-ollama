@@ -3,4 +3,4 @@
 # bootstrap environment
 source script/bootstrap
 
-jest -i --forceExit
+vitest run --coverage --pool=threads
