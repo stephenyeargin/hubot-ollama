@@ -100,7 +100,7 @@ When `HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK=true`, hubot-ollama can answer 
 
 - It runs through Hubot `catchAll`, so it only triggers when no other listener matched first.
 - In shared rooms, fallback only triggers when explicitly addressed by bot name (for example: `hubot summarize this`).
-- Alias-only prefixes (for example: `! summarize this`) do **not** trigger fallback mode.
+- In shared rooms, alias-only prefixes (for example: `! summarize this`) do **not** trigger fallback mode.
 - In direct messages/private chats, plain text is treated as addressed.
 - Explicit commands still work exactly as before (`hubot ask ...`, `hubot ollama ...`, `hubot llm ...`).
 

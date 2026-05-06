@@ -60,7 +60,7 @@ module.exports = (robot) => {
   const WEB_FETCH_CONCURRENCY = Math.max(1, Number.parseInt(process.env.HUBOT_OLLAMA_WEB_FETCH_CONCURRENCY || '3', 10));
   const WEB_MAX_BYTES = Math.max(1024, Number.parseInt(process.env.HUBOT_OLLAMA_WEB_MAX_BYTES || '120000', 10));
   const WEB_TIMEOUT_MS = Math.max(1000, Number.parseInt(process.env.HUBOT_OLLAMA_WEB_TIMEOUT_MS || '45000', 10));
-  const RESPOND_TO_ADDRESSED_FALLBACK = /^1|true|yes$/i.test(process.env.HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK || '');
+  const RESPOND_TO_ADDRESSED_FALLBACK = /^(?:1|true|yes)$/i.test(process.env.HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK || '');
 
   // Emoji used with compatible adapters to indicate message is being processed
   const THINKING_EMOJI = 'hourglass_flowing_sand';
@@ -1066,7 +1066,7 @@ IMPORTANT: Keep the summary under 600 characters.`;
     return false;
   };
 
-  // Fallback mode intentionally ignores alias-only prefixes (like '!') to avoid surprising captures.
+  // In shared rooms, fallback intentionally ignores alias-only prefixes (like '!') to avoid surprising captures.
   const extractAddressedFallbackPrompt = (text) => {
     if (typeof text !== 'string') return null;
     const botName = (robot.name || '').trim();
