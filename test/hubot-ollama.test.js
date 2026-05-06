@@ -3,6 +3,31 @@ const nock = require('nock');
 const Helper = require('./helpers/hubot-helper');
 
 const helper = new Helper('./../src/hubot-ollama.js');
+const fallbackClaimHelper = new Helper([
+  './fixtures/fallback-claim-script.js',
+  './../src/hubot-ollama.js'
+]);
+
+const createMockTextMessage = (text, {
+  userName = 'alice',
+  userId = 'U123',
+  room = 'room1'
+} = {}) => ({
+  text,
+  user: {
+    id: userId,
+    name: userName,
+    room
+  },
+  room,
+  done: false,
+  match(regex) {
+    return this.text.match(regex);
+  },
+  toString() {
+    return this.text;
+  }
+});
 
 describe('hubot-ollama', () => {
   let room = null;
@@ -31,6 +56,7 @@ describe('hubot-ollama', () => {
     delete process.env.HUBOT_OLLAMA_CONTEXT_TURNS;
     delete process.env.HUBOT_OLLAMA_HOST;
     delete process.env.HUBOT_OLLAMA_API_KEY;
+    delete process.env.HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK;
     delete process.env.HUBOT_OLLAMA_RESPOND_TO_DIRECT;
   });
 
@@ -131,6 +157,111 @@ describe('hubot-ollama', () => {
           ['hubot', 'Response using llm command'],
         ]);
       });
+    });
+  });
+
+  describe('Addressed Fallback Mode', () => {
+    it('is disabled by default', async () => {
+      room.user.say('alice', 'hubot tell me a joke');
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(room.messages).toEqual([
+        ['alice', 'hubot tell me a joke'],
+      ]);
+      expect(nock.pendingMocks()).toEqual([]);
+    });
+
+    it('responds to explicit bot-name addressing when enabled', async () => {
+      room.destroy();
+      process.env.HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK = 'true';
+      room = await helper.createRoom();
+      ['debug', 'info', 'warn', 'warning', 'error'].forEach((method) => {
+        room.robot.logger[method] = vi.fn();
+      });
+
+      mockOllamaChat('Fallback response from addressed mode');
+      room.user.say('alice', 'hubot explain memoization');
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(room.messages).toEqual([
+        ['alice', 'hubot explain memoization'],
+        ['hubot', 'Fallback response from addressed mode'],
+      ]);
+    });
+
+    it('supports renamed bot names in addressed fallback mode', async () => {
+      room.destroy();
+      process.env.HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK = 'true';
+      room = await helper.createRoom();
+      ['debug', 'info', 'warn', 'warning', 'error'].forEach((method) => {
+        room.robot.logger[method] = vi.fn();
+      });
+      room.robot.name = 'jarvis';
+
+      mockOllamaChat('Renamed bot fallback response');
+      room.user.say('alice', 'jarvis summarize this quickly');
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(room.messages).toEqual([
+        ['alice', 'jarvis summarize this quickly'],
+        ['hubot', 'Renamed bot fallback response'],
+      ]);
+    });
+
+    it('does not trigger fallback on alias-like prefixes', async () => {
+      room.destroy();
+      process.env.HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK = 'true';
+      room = await helper.createRoom();
+      ['debug', 'info', 'warn', 'warning', 'error'].forEach((method) => {
+        room.robot.logger[method] = vi.fn();
+      });
+
+      room.user.say('alice', '! explain memoization');
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(room.messages).toEqual([
+        ['alice', '! explain memoization'],
+      ]);
+      expect(nock.pendingMocks()).toEqual([]);
+    });
+
+    it('treats direct-message plain text as addressed when enabled', async () => {
+      room.destroy();
+      process.env.HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK = 'true';
+      room = await helper.createRoom();
+      ['debug', 'info', 'warn', 'warning', 'error'].forEach((method) => {
+        room.robot.logger[method] = vi.fn();
+      });
+
+      mockOllamaChat('DM fallback response');
+      room.user.say('alice', createMockTextMessage('give me a short recap', {
+        userName: 'alice',
+        userId: 'U111',
+        room: 'alice'
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(room.messages).toEqual([
+        ['alice', 'give me a short recap'],
+        ['hubot', 'DM fallback response'],
+      ]);
+    });
+
+    it('stays silent when another listener already matched', async () => {
+      room.destroy();
+      process.env.HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK = 'true';
+      room = await fallbackClaimHelper.createRoom();
+      ['debug', 'info', 'warn', 'warning', 'error'].forEach((method) => {
+        room.robot.logger[method] = vi.fn();
+      });
+
+      room.user.say('alice', 'hubot explain cache invalidation');
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(room.messages).toEqual([
+        ['alice', 'hubot explain cache invalidation'],
+      ]);
+      expect(nock.pendingMocks()).toEqual([]);
     });
   });
 

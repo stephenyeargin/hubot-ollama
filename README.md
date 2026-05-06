@@ -52,6 +52,7 @@ Prompts are sanitized and truncated if they exceed the configured limit.
 | `HUBOT_OLLAMA_CONTEXT_TTL_MS` | Optional | `600000` (10 min) | Time to maintain conversation history; `0` to disable |
 | `HUBOT_OLLAMA_CONTEXT_TURNS` | Optional | `5` | Maximum number of conversation turns to remember |
 | `HUBOT_OLLAMA_CONTEXT_SCOPE` | Optional | `room-user` | Context isolation: `room-user`, `room`, or `thread` |
+| `HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK` | Optional | `false` | Enable fallback replies for addressed messages when no other listener matched |
 | `HUBOT_OLLAMA_WEB_ENABLED` | Optional | `false` | Enable web-assisted workflow that can search/fetch context |
 | `HUBOT_OLLAMA_WEB_MAX_RESULTS` | Optional | `5` | Max search results to use (capped at 10) |
 | `HUBOT_OLLAMA_WEB_FETCH_CONCURRENCY` | Optional | `3` | Parallel fetch concurrency |
@@ -88,6 +89,20 @@ export HUBOT_OLLAMA_CONTEXT_TURNS=10
 export HUBOT_OLLAMA_CONTEXT_TTL_MS=1800000
 export HUBOT_OLLAMA_CONTEXT_SCOPE=room
 ```
+
+Enable addressed fallback mode:
+```bash
+export HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK=true
+```
+
+### Addressed Fallback Mode
+When `HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK=true`, hubot-ollama can answer without `ask`/`ollama`/`llm` prefixes, but only as a fallback.
+
+- It runs through Hubot `catchAll`, so it only triggers when no other listener matched first.
+- In shared rooms, fallback only triggers when explicitly addressed by bot name (for example: `hubot summarize this`).
+- Alias-only prefixes (for example: `! summarize this`) do **not** trigger fallback mode.
+- In direct messages/private chats, plain text is treated as addressed.
+- Explicit commands still work exactly as before (`hubot ask ...`, `hubot ollama ...`, `hubot llm ...`).
 
 ## Examples
 ```text
