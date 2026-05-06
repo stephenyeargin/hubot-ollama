@@ -11,7 +11,9 @@ const fallbackClaimHelper = new Helper([
 const createMockTextMessage = (text, {
   userName = 'alice',
   userId = 'U123',
-  room = 'room1'
+  room = 'room1',
+  privateMessage = false,
+  rawMessage = undefined
 } = {}) => ({
   text,
   user: {
@@ -20,6 +22,8 @@ const createMockTextMessage = (text, {
     room
   },
   room,
+  private: privateMessage,
+  rawMessage,
   done: false,
   match(regex) {
     return this.text.match(regex);
@@ -225,6 +229,23 @@ describe('hubot-ollama', () => {
       expect(nock.pendingMocks()).toEqual([]);
     });
 
+    it('does not trigger fallback on single-token command-like misses', async () => {
+      room.destroy();
+      process.env.HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK = 'true';
+      room = await helper.createRoom();
+      ['debug', 'info', 'warn', 'warning', 'error'].forEach((method) => {
+        room.robot.logger[method] = vi.fn();
+      });
+
+      room.user.say('alice', 'hubot nomatch');
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(room.messages).toEqual([
+        ['alice', 'hubot nomatch'],
+      ]);
+      expect(nock.pendingMocks()).toEqual([]);
+    });
+
     it('treats direct-message plain text as addressed when enabled', async () => {
       room.destroy();
       process.env.HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK = 'true';
@@ -237,7 +258,8 @@ describe('hubot-ollama', () => {
       room.user.say('alice', createMockTextMessage('give me a short recap', {
         userName: 'alice',
         userId: 'U111',
-        room: 'alice'
+        room: 'direct',
+        privateMessage: true
       }));
       await new Promise((resolve) => setTimeout(resolve, 150));
 

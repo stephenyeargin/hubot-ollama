@@ -1054,14 +1054,14 @@ IMPORTANT: Keep the summary under 600 characters.`;
   const escapeRegex = (value) => String(value).replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
 
   const isDirectMessage = (message) => {
-    if (!message || !message.user) return false;
-    const room = message.room || message.user.room;
-    const userName = message.user.name;
-    const userId = message.user.id;
+    if (!message) return false;
+    const room = message.room || (message.user && message.user.room);
+    const rawMessage = message.rawMessage || {};
 
-    if (!room || room === 'direct') return true;
-    if (userName && room === userName) return true;
-    if (userId && room === userId) return true;
+    // Prefer explicit adapter signals to avoid classifying Shell messages as DMs.
+    if (message.private === true) return true;
+    if (rawMessage.channel_type === 'im' || rawMessage.is_im === true) return true;
+    if (room === 'direct') return true;
 
     return false;
   };
@@ -1075,6 +1075,12 @@ IMPORTANT: Keep the summary under 600 characters.`;
     const pattern = new RegExp(`^\\s*@?${escapeRegex(botName)}[:,]?\\s+(.+)\\s*$`, 'i');
     const match = text.match(pattern);
     return match ? match[1].trim() : null;
+  };
+
+  const isCommandLikeFallbackPrompt = (prompt) => {
+    if (typeof prompt !== 'string') return false;
+    // Single-token prompts are often command misses (e.g., "Hubot deploy").
+    return /^[a-z0-9._-]+$/i.test(prompt.trim());
   };
 
   // Shared handler for processing prompts from any source
@@ -1135,11 +1141,13 @@ IMPORTANT: Keep the summary under 600 characters.`;
       const text = originalMessage && originalMessage.text;
       if (typeof text !== 'string' || text.trim() === '') return;
 
-      const userPrompt = isDirectMessage(originalMessage)
+      const isDirect = isDirectMessage(originalMessage);
+      const userPrompt = isDirect
         ? text.trim()
         : extractAddressedFallbackPrompt(text);
 
       if (!userPrompt) return;
+      if (!isDirect && isCommandLikeFallbackPrompt(userPrompt)) return;
 
       robot.logger.debug(`Fallback addressed prompt: ${userPrompt}`);
       await handlePrompt(userPrompt, msg);
