@@ -395,9 +395,9 @@ IMPORTANT: Keep the summary under 600 characters.`;
       return { history: [], summary: null };
     }
 
-    return { 
-      history: context.history || [], 
-      summary: context.summary || null 
+    return {
+      history: context.history || [],
+      summary: context.summary || null
     };
   };
 
