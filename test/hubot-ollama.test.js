@@ -212,7 +212,7 @@ describe('hubot-ollama', () => {
       ]);
     });
 
-    it('does not trigger fallback on alias-like prefixes', async () => {
+    it('does not trigger fallback on alias-like prefixes when no alias is configured', async () => {
       room.destroy();
       process.env.HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK = 'true';
       room = await helper.createRoom();
@@ -225,6 +225,43 @@ describe('hubot-ollama', () => {
 
       expect(room.messages).toEqual([
         ['alice', '! explain memoization'],
+      ]);
+      expect(nock.pendingMocks()).toEqual([]);
+    });
+
+    it('triggers fallback for alias prefix when alias is configured (Slack @mention normalization)', async () => {
+      room.destroy();
+      process.env.HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK = 'true';
+      room = await helper.createRoom();
+      ['debug', 'info', 'warn', 'warning', 'error'].forEach((method) => {
+        room.robot.logger[method] = vi.fn();
+      });
+      room.robot.alias = '!';
+
+      mockOllamaChat('Alias prefix fallback response');
+      room.user.say('alice', '! explain memoization');
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(room.messages).toEqual([
+        ['alice', '! explain memoization'],
+        ['hubot', 'Alias prefix fallback response'],
+      ]);
+    });
+
+    it('does not trigger fallback for single-token alias-prefix command misses', async () => {
+      room.destroy();
+      process.env.HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK = 'true';
+      room = await helper.createRoom();
+      ['debug', 'info', 'warn', 'warning', 'error'].forEach((method) => {
+        room.robot.logger[method] = vi.fn();
+      });
+      room.robot.alias = '!';
+
+      room.user.say('alice', '! ping');
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(room.messages).toEqual([
+        ['alice', '! ping'],
       ]);
       expect(nock.pendingMocks()).toEqual([]);
     });

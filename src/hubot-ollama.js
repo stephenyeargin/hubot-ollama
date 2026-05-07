@@ -1066,13 +1066,23 @@ IMPORTANT: Keep the summary under 600 characters.`;
     return false;
   };
 
-  // In shared rooms, fallback intentionally ignores alias-only prefixes (like '!') to avoid surprising captures.
+  // In shared rooms, fallback triggers when the bot is explicitly addressed by name or alias.
+  // In Slack, @mentions are normalized to the alias character by the adapter (e.g. '! text'),
+  // so we accept alias prefix as a valid addressing form when robot.alias is configured.
+  // Since catchAll only fires when no command listener matched, this is safe: if '! ping'
+  // triggered a real listener, it would not reach catchAll.
   const extractAddressedFallbackPrompt = (text) => {
     if (typeof text !== 'string') return null;
     const botName = (robot.name || '').trim();
     if (!botName) return null;
 
-    const pattern = new RegExp(`^\\s*@?${escapeRegex(botName)}[:,]?\\s+(.+)\\s*$`, 'i');
+    const escapedName = escapeRegex(botName);
+    const alias = robot.alias ? escapeRegex(robot.alias) : null;
+    const prefixPattern = alias
+      ? `(?:@?${escapedName}|${alias})`
+      : `@?${escapedName}`;
+
+    const pattern = new RegExp(`^\\s*${prefixPattern}[:,]?\\s+(.+)\\s*$`, 'i');
     const match = text.match(pattern);
     return match ? match[1].trim() : null;
   };
