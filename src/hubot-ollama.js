@@ -17,6 +17,7 @@
 //   HUBOT_OLLAMA_WEB_FETCH_CONCURRENCY - Parallel fetch concurrency (default: 3)
 //   HUBOT_OLLAMA_WEB_MAX_BYTES - Max bytes of fetched content per page (default: 120000)
 //   HUBOT_OLLAMA_WEB_TIMEOUT_MS - Overall timeout for web phase (default: 45000)
+//   HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK - Enable fallback replies for addressed messages when no other listener matches (default: false)
 //
 // Commands:
 //   hubot ask <prompt> - Ask Ollama a question
@@ -59,6 +60,7 @@ module.exports = (robot) => {
   const WEB_FETCH_CONCURRENCY = Math.max(1, Number.parseInt(process.env.HUBOT_OLLAMA_WEB_FETCH_CONCURRENCY || '3', 10));
   const WEB_MAX_BYTES = Math.max(1024, Number.parseInt(process.env.HUBOT_OLLAMA_WEB_MAX_BYTES || '120000', 10));
   const WEB_TIMEOUT_MS = Math.max(1000, Number.parseInt(process.env.HUBOT_OLLAMA_WEB_TIMEOUT_MS || '45000', 10));
+  const RESPOND_TO_ADDRESSED_FALLBACK = /^(?:1|true|yes)$/i.test(process.env.HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK || '');
 
   // Emoji used with compatible adapters to indicate message is being processed
   const THINKING_EMOJI = 'hourglass_flowing_sand';
@@ -1049,6 +1051,38 @@ IMPORTANT: Keep the summary under 600 characters.`;
     }
   };
 
+  const escapeRegex = (value) => String(value).replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+
+  const isDirectMessage = (message) => {
+    if (!message) return false;
+    const room = message.room || (message.user && message.user.room);
+    const rawMessage = message.rawMessage || {};
+
+    // Prefer explicit adapter signals to avoid classifying Shell messages as DMs.
+    if (message.private === true) return true;
+    if (rawMessage.channel_type === 'im' || rawMessage.is_im === true) return true;
+    if (room === 'direct') return true;
+
+    return false;
+  };
+
+  // In shared rooms, fallback intentionally ignores alias-only prefixes (like '!') to avoid surprising captures.
+  const extractAddressedFallbackPrompt = (text) => {
+    if (typeof text !== 'string') return null;
+    const botName = (robot.name || '').trim();
+    if (!botName) return null;
+
+    const pattern = new RegExp(`^\\s*@?${escapeRegex(botName)}[:,]?\\s+(.+)\\s*$`, 'i');
+    const match = text.match(pattern);
+    return match ? match[1].trim() : null;
+  };
+
+  const isCommandLikeFallbackPrompt = (prompt) => {
+    if (typeof prompt !== 'string') return false;
+    // Single-token prompts are often command misses (e.g., "Hubot deploy").
+    return /^[a-z0-9._-]+$/i.test(prompt.trim());
+  };
+
   // Shared handler for processing prompts from any source
   const handlePrompt = async (userPrompt, msg) => {
     if (!userPrompt || userPrompt.trim() === '') {
@@ -1100,4 +1134,23 @@ IMPORTANT: Keep the summary under 600 characters.`;
     robot.logger.debug(`User prompt: ${userPrompt}`);
     await handlePrompt(userPrompt, msg);
   });
+
+  if (RESPOND_TO_ADDRESSED_FALLBACK) {
+    robot.catchAll(async (msg) => {
+      const originalMessage = (msg && msg.message && (msg.message.message || msg.message)) || null;
+      const text = originalMessage && originalMessage.text;
+      if (typeof text !== 'string' || text.trim() === '') return;
+
+      const isDirect = isDirectMessage(originalMessage);
+      const userPrompt = isDirect
+        ? text.trim()
+        : extractAddressedFallbackPrompt(text);
+
+      if (!userPrompt) return;
+      if (!isDirect && isCommandLikeFallbackPrompt(userPrompt)) return;
+
+      robot.logger.debug(`Fallback addressed prompt: ${userPrompt}`);
+      await handlePrompt(userPrompt, msg);
+    });
+  }
 };
