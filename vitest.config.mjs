@@ -8,7 +8,7 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['lcov', 'text', 'clover'],
       reportsDirectory: './test-results',
-      exclude: ['node_modules/**', 'eslint.config.mjs', 'vitest.config.mjs'],
+      exclude: ['node_modules/**', 'eslint.config.mjs', 'vitest.config.mjs', 'index.js'],
     },
   },
 });

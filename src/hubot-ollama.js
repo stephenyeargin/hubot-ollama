@@ -31,6 +31,7 @@
 const { Ollama } = require('ollama');
 
 const registry = require('./tool-registry');
+const createHubotHelpTool = require('./tools/hubot-help-tool');
 const createJavaScriptReplTool = require('./tools/javascript-repl-tool');
 const createWebFetchTool = require('./tools/web-fetch-tool');
 const createWebSearchTool = require('./tools/web-search-tool');
@@ -132,6 +133,15 @@ module.exports = (robot) => {
   }
 
   const ollama = new Ollama(ollamaConfig);
+
+  // Register help tool (always available — no feature gate required)
+  const hubotHelpTool = createHubotHelpTool(null, {}, robot.logger);
+  registry.registerTool(hubotHelpTool.name, {
+    description: hubotHelpTool.description,
+    parameters: hubotHelpTool.parameters,
+    handler: hubotHelpTool.handler
+  });
+  robot.logger.debug('Registered Hubot help tool');
 
   // Register JavaScript REPL tool if tools are enabled
   if (TOOLS_ENABLED) {
