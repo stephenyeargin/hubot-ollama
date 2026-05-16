@@ -84,6 +84,33 @@ class MockOllama {
 mockRequire('ollama', { Ollama: MockOllama });
 
 const helper = new Helper(path.join(__dirname, '..', 'src', 'hubot-ollama.js'));
+const slackHelper = new Helper([
+  path.join(__dirname, 'adapters', 'slack.js'),
+  path.join(__dirname, '..', 'src', 'hubot-ollama.js')
+]);
+
+const createMockTextMessage = (text, {
+  userName = 'alice',
+  userId = 'U123',
+  room = 'room1',
+  rawMessage = undefined
+} = {}) => ({
+  text,
+  user: {
+    id: userId,
+    name: userName,
+    room
+  },
+  room,
+  rawMessage,
+  done: false,
+  match(regex) {
+    return this.text.match(regex);
+  },
+  toString() {
+    return this.text;
+  }
+});
 
 describe('hubot-ollama web-enabled flow', () => {
   let room;
@@ -134,5 +161,74 @@ describe('hubot-ollama web-enabled flow', () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
     const last = room.messages[room.messages.length - 1][1];
     expect(last).toMatch(/Answer without web/);
+  });
+
+  it('keeps web-search status messaging when Slack reactions are not permitted', async () => {
+    room.destroy();
+    room = await slackHelper.createRoom();
+    ['debug', 'info', 'warning', 'error'].forEach((method) => {
+      room.robot.logger[method] = vi.fn();
+    });
+
+    room.robot.adapter.client = {
+      web: {
+        reactions: {
+          add: vi.fn().mockRejectedValue(new Error('missing_scope')),
+          remove: vi.fn().mockRejectedValue(new Error('missing_scope'))
+        }
+      }
+    };
+
+    await room.user.say('alice', createMockTextMessage('hubot ask summarize latest node release', {
+      room: 'room1',
+      rawMessage: { ts: '1716400000.000300' }
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    const hasSearchStatus = room.messages.some((m) => {
+      const payload = m[1];
+      return m[0] === 'hubot' &&
+        typeof payload === 'object' &&
+        typeof payload.text === 'string' &&
+        /Searching web for relevant sources/.test(payload.text);
+    });
+
+    const last = room.messages[room.messages.length - 1][1];
+    const lastText = typeof last === 'string' ? last : last.text;
+    expect(hasSearchStatus).toBe(true);
+    expect(lastText).toMatch(/Answer with web context/);
+  });
+
+  it('adds and removes tool reaction during Slack web tool execution', async () => {
+    room.destroy();
+    room = await slackHelper.createRoom();
+    ['debug', 'info', 'warning', 'error'].forEach((method) => {
+      room.robot.logger[method] = vi.fn();
+    });
+
+    const addReaction = vi.fn().mockResolvedValue({ ok: true });
+    const removeReaction = vi.fn().mockResolvedValue({ ok: true });
+    room.robot.adapter.client = {
+      web: {
+        reactions: {
+          add: addReaction,
+          remove: removeReaction
+        }
+      }
+    };
+
+    await room.user.say('alice', createMockTextMessage('hubot ask summarize latest node release', {
+      room: 'room1',
+      rawMessage: { ts: '1716400000.000400' }
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    const addedNames = addReaction.mock.calls.map((call) => call[0].name);
+    const removedNames = removeReaction.mock.calls.map((call) => call[0].name);
+
+    expect(addedNames).toContain('thought_balloon');
+    expect(addedNames).toContain('hammer_and_wrench');
+    expect(removedNames).toContain('thought_balloon');
+    expect(removedNames).toContain('hammer_and_wrench');
   });
 });

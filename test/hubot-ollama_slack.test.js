@@ -7,6 +7,29 @@ const helper = new Helper([
   './../src/hubot-ollama.js'
 ]);
 
+const createMockTextMessage = (text, {
+  userName = 'alice',
+  userId = 'U123',
+  room = 'room1',
+  rawMessage = undefined
+} = {}) => ({
+  text,
+  user: {
+    id: userId,
+    name: userName,
+    room
+  },
+  room,
+  rawMessage,
+  done: false,
+  match(regex) {
+    return this.text.match(regex);
+  },
+  toString() {
+    return this.text;
+  }
+});
+
 describe('hubot-ollama slack', () => {
   let room = null;
   const OLLAMA_HOST = 'http://127.0.0.1:11434';
@@ -91,5 +114,49 @@ describe('hubot-ollama slack', () => {
         expect(room.robot.logger.debug).toHaveBeenCalledWith('Calling Ollama API with model: llama3.2');
       });
     });
+  });
+
+  describe('Slack Reaction Lifecycle', () => {
+    it('adds and removes thought balloon reaction around prompt handling', async () => {
+      process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'false';
+
+      const addReaction = vi.fn().mockResolvedValue({ ok: true });
+      const removeReaction = vi.fn().mockResolvedValue({ ok: true });
+      room.robot.adapter.client = {
+        web: {
+          reactions: {
+            add: addReaction,
+            remove: removeReaction
+          }
+        }
+      };
+
+      nock(OLLAMA_HOST)
+        .post('/api/show', { name: 'llama3.2' })
+        .reply(200, { capabilities: [] });
+
+      mockOllamaChat('Hello from Slack.');
+
+      await room.user.say('alice', createMockTextMessage('hubot ask hello', {
+        room: 'room1',
+        rawMessage: { ts: '1716400000.000100' }
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(addReaction).toHaveBeenCalledWith({
+        name: 'thought_balloon',
+        channel: 'room1',
+        timestamp: '1716400000.000100'
+      });
+
+      expect(removeReaction).toHaveBeenCalledWith({
+        name: 'thought_balloon',
+        channel: 'room1',
+        timestamp: '1716400000.000100'
+      });
+
+      delete process.env.HUBOT_OLLAMA_TOOLS_ENABLED;
+    });
+
   });
 });
