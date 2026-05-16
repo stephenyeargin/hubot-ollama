@@ -771,7 +771,12 @@ IMPORTANT: Keep the summary under 600 characters.`;
           robot.logger.debug(`Tool result: ${JSON.stringify(toolResults)}`);
           return { toolName, toolResults, wasNameless, unrecoverable: false };
         } finally {
-          if (toolReactionAdded) await removeThinkingReaction(msg, TOOL_INVOKED_EMOJI);
+          // Remove reaction asynchronously to avoid blocking critical path
+          if (toolReactionAdded) {
+            removeThinkingReaction(msg, TOOL_INVOKED_EMOJI).catch((err) => {
+              robot.logger.debug(`Tool reaction removal failed: ${err.message}`);
+            });
+          }
         }
       } catch (error) {
         robot.logger.error(`Tool execution failed: ${error.message}`);

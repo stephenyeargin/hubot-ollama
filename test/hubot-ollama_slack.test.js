@@ -1,34 +1,12 @@
 const nock = require('nock');
 
 const Helper = require('./helpers/hubot-helper');
+const { createMockTextMessage } = require('./helpers/mock-message');
 
 const helper = new Helper([
   './adapters/slack.js',
   './../src/hubot-ollama.js'
 ]);
-
-const createMockTextMessage = (text, {
-  userName = 'alice',
-  userId = 'U123',
-  room = 'room1',
-  rawMessage = undefined
-} = {}) => ({
-  text,
-  user: {
-    id: userId,
-    name: userName,
-    room
-  },
-  room,
-  rawMessage,
-  done: false,
-  match(regex) {
-    return this.text.match(regex);
-  },
-  toString() {
-    return this.text;
-  }
-});
 
 describe('hubot-ollama slack', () => {
   let room = null;
@@ -56,6 +34,7 @@ describe('hubot-ollama slack', () => {
     delete process.env.HUBOT_OLLAMA_CONTEXT_TURNS;
     delete process.env.HUBOT_OLLAMA_HOST;
     delete process.env.HUBOT_OLLAMA_API_KEY;
+    delete process.env.HUBOT_OLLAMA_TOOLS_ENABLED;
   });  // Helper to create a mock Ollama API response
   const mockOllamaChat = (response, options = {}) => {
     const scope = nock(OLLAMA_HOST)
@@ -119,6 +98,11 @@ describe('hubot-ollama slack', () => {
   describe('Slack Reaction Lifecycle', () => {
     it('adds and removes thought balloon reaction around prompt handling', async () => {
       process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'false';
+      room.destroy();
+      room = await helper.createRoom();
+      ['debug', 'info', 'warning', 'error'].forEach((method) => {
+        room.robot.logger[method] = vi.fn();
+      });
 
       const addReaction = vi.fn().mockResolvedValue({ ok: true });
       const removeReaction = vi.fn().mockResolvedValue({ ok: true });
@@ -154,8 +138,6 @@ describe('hubot-ollama slack', () => {
         channel: 'room1',
         timestamp: '1716400000.000100'
       });
-
-      delete process.env.HUBOT_OLLAMA_TOOLS_ENABLED;
     });
 
   });

@@ -5,7 +5,7 @@ const mockRequire = require('mock-require');
 const registry = require('../src/tool-registry');
 
 const Helper = require('./helpers/hubot-helper');
-
+const { createMockTextMessage } = require('./helpers/mock-message');
 
 class MockOllama {
   constructor() {}
@@ -88,29 +88,6 @@ const slackHelper = new Helper([
   path.join(__dirname, 'adapters', 'slack.js'),
   path.join(__dirname, '..', 'src', 'hubot-ollama.js')
 ]);
-
-const createMockTextMessage = (text, {
-  userName = 'alice',
-  userId = 'U123',
-  room = 'room1',
-  rawMessage = undefined
-} = {}) => ({
-  text,
-  user: {
-    id: userId,
-    name: userName,
-    room
-  },
-  room,
-  rawMessage,
-  done: false,
-  match(regex) {
-    return this.text.match(regex);
-  },
-  toString() {
-    return this.text;
-  }
-});
 
 describe('hubot-ollama web-enabled flow', () => {
   let room;
