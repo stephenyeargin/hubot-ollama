@@ -63,8 +63,9 @@ module.exports = (robot) => {
   const WEB_TIMEOUT_MS = Math.max(1000, Number.parseInt(process.env.HUBOT_OLLAMA_WEB_TIMEOUT_MS || '45000', 10));
   const RESPOND_TO_ADDRESSED_FALLBACK = /^(?:1|true|yes)$/i.test(process.env.HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK || '');
 
-  // Emoji used with compatible adapters to indicate message is being processed
-  const THINKING_EMOJI = 'hourglass_flowing_sand';
+  // Emoji used with compatible adapters to indicate processing state
+  const REQUEST_THINKING_EMOJI = 'thought_balloon';
+  const TOOL_INVOKED_EMOJI = 'hammer_and_wrench';
 
   // For formatting instructions
   const adapterName = robot.adapterName ?? robot.adapter?.name;
@@ -760,12 +761,23 @@ IMPORTANT: Keep the summary under 600 characters.`;
         robot.logger.info(`Executing tool: ${toolName}`);
         if (toolCallLimits.hasOwnProperty(toolName)) toolCallCounts[toolName]++;
         if (!toolsUsed.includes(toolName)) toolsUsed.push(toolName);
-        const toolResults = await selectedTool.handler(
-          { ...toolArgs, _invocationContextKey: invocationContextKey },
-          robot, msg
-        );
-        robot.logger.debug(`Tool result: ${JSON.stringify(toolResults)}`);
-        return { toolName, toolResults, wasNameless, unrecoverable: false };
+        let toolReactionAdded = false;
+        try {
+          toolReactionAdded = await addThinkingReaction(msg, TOOL_INVOKED_EMOJI);
+          const toolResults = await selectedTool.handler(
+            { ...toolArgs, _invocationContextKey: invocationContextKey },
+            robot, msg
+          );
+          robot.logger.debug(`Tool result: ${JSON.stringify(toolResults)}`);
+          return { toolName, toolResults, wasNameless, unrecoverable: false };
+        } finally {
+          // Remove reaction asynchronously to avoid blocking critical path
+          if (toolReactionAdded) {
+            removeThinkingReaction(msg, TOOL_INVOKED_EMOJI).catch((err) => {
+              robot.logger.debug(`Tool reaction removal failed: ${err.message}`);
+            });
+          }
+        }
       } catch (error) {
         robot.logger.error(`Tool execution failed: ${error.message}`);
         return { toolName, toolResults: { error: error.message }, wasNameless, unrecoverable: false };
@@ -1123,7 +1135,7 @@ IMPORTANT: Keep the summary under 600 characters.`;
     let reactionAdded = false;
     try {
       // Try to add a thinking reaction while processing (adapter-aware)
-      reactionAdded = await addThinkingReaction(msg, THINKING_EMOJI);
+      reactionAdded = await addThinkingReaction(msg, REQUEST_THINKING_EMOJI);
 
       const response = await askOllama(sanitizedPrompt, msg, conversationHistory, conversationSummary);
 
@@ -1144,7 +1156,7 @@ IMPORTANT: Keep the summary under 600 characters.`;
       msg.send(formatResponse(`Error: ${err.message || 'An unexpected error occurred while communicating with Ollama.'}`, msg));
     } finally {
       // Best-effort removal of the reaction once we're done
-      if (reactionAdded) await removeThinkingReaction(msg, THINKING_EMOJI);
+      if (reactionAdded) await removeThinkingReaction(msg, REQUEST_THINKING_EMOJI);
     }
   };
 

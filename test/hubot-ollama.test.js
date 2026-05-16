@@ -1,37 +1,13 @@
 const nock = require('nock');
 
 const Helper = require('./helpers/hubot-helper');
+const { createMockTextMessage } = require('./helpers/mock-message');
 
 const helper = new Helper('./../src/hubot-ollama.js');
 const fallbackClaimHelper = new Helper([
   './fixtures/fallback-claim-script.js',
   './../src/hubot-ollama.js'
 ]);
-
-const createMockTextMessage = (text, {
-  userName = 'alice',
-  userId = 'U123',
-  room = 'room1',
-  privateMessage = false,
-  rawMessage = undefined
-} = {}) => ({
-  text,
-  user: {
-    id: userId,
-    name: userName,
-    room
-  },
-  room,
-  private: privateMessage,
-  rawMessage,
-  done: false,
-  match(regex) {
-    return this.text.match(regex);
-  },
-  toString() {
-    return this.text;
-  }
-});
 
 describe('hubot-ollama', () => {
   let room = null;

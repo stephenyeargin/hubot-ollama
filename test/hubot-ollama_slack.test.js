@@ -1,6 +1,7 @@
 const nock = require('nock');
 
 const Helper = require('./helpers/hubot-helper');
+const { createMockTextMessage } = require('./helpers/mock-message');
 
 const helper = new Helper([
   './adapters/slack.js',
@@ -33,6 +34,7 @@ describe('hubot-ollama slack', () => {
     delete process.env.HUBOT_OLLAMA_CONTEXT_TURNS;
     delete process.env.HUBOT_OLLAMA_HOST;
     delete process.env.HUBOT_OLLAMA_API_KEY;
+    delete process.env.HUBOT_OLLAMA_TOOLS_ENABLED;
   });  // Helper to create a mock Ollama API response
   const mockOllamaChat = (response, options = {}) => {
     const scope = nock(OLLAMA_HOST)
@@ -91,5 +93,52 @@ describe('hubot-ollama slack', () => {
         expect(room.robot.logger.debug).toHaveBeenCalledWith('Calling Ollama API with model: llama3.2');
       });
     });
+  });
+
+  describe('Slack Reaction Lifecycle', () => {
+    it('adds and removes thought balloon reaction around prompt handling', async () => {
+      process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'false';
+      room.destroy();
+      room = await helper.createRoom();
+      ['debug', 'info', 'warning', 'error'].forEach((method) => {
+        room.robot.logger[method] = vi.fn();
+      });
+
+      const addReaction = vi.fn().mockResolvedValue({ ok: true });
+      const removeReaction = vi.fn().mockResolvedValue({ ok: true });
+      room.robot.adapter.client = {
+        web: {
+          reactions: {
+            add: addReaction,
+            remove: removeReaction
+          }
+        }
+      };
+
+      nock(OLLAMA_HOST)
+        .post('/api/show', { name: 'llama3.2' })
+        .reply(200, { capabilities: [] });
+
+      mockOllamaChat('Hello from Slack.');
+
+      await room.user.say('alice', createMockTextMessage('hubot ask hello', {
+        room: 'room1',
+        rawMessage: { ts: '1716400000.000100' }
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(addReaction).toHaveBeenCalledWith({
+        name: 'thought_balloon',
+        channel: 'room1',
+        timestamp: '1716400000.000100'
+      });
+
+      expect(removeReaction).toHaveBeenCalledWith({
+        name: 'thought_balloon',
+        channel: 'room1',
+        timestamp: '1716400000.000100'
+      });
+    });
+
   });
 });

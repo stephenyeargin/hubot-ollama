@@ -119,6 +119,16 @@ When `HUBOT_OLLAMA_WEB_ENABLED=true` and the connected Ollama host supports web 
 - Phase 3: The model incorporates the returned context into its final reply.
 - The bot sends a status message when the search is running and skips duplicate web searches in the same interaction.
 
+### Slack Reactions And Status
+When running with the Slack adapter, hubot-ollama uses reactions/status indicators on the triggering message:
+
+- `💭` (`thought_balloon`) while the main prompt is being processed.
+- `🛠️` (`hammer_and_wrench`) while a tool call is actively executing.
+- `⏳` status text is posted during web search (`_Searching web for relevant sources..._`).
+
+Reactions require Slack reaction scopes (for example, `reactions:write`).
+If reaction permissions are missing, the bot continues normally and keeps the existing web-search status message behavior.
+
 Enable:
 ```bash
 export HUBOT_OLLAMA_WEB_ENABLED=true
