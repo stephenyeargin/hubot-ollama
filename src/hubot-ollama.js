@@ -503,8 +503,16 @@ IMPORTANT: Keep the summary under 600 characters.`;
         const channel = msg.message.room;
         const raw = msg.message.rawMessage || {};
         const envelopeMsg = (msg.envelope && msg.envelope.message) || {};
-        const timestamp = raw.ts || raw.event_ts || msg.message.thread_ts || envelopeMsg.ts || envelopeMsg.thread_ts;
-        if (channel && timestamp) return { channel, timestamp };
+        // Support both adapter-normalized message shape and Slack Events API envelope shape.
+        const derivedChannel = channel || raw.channel || (raw.event && raw.event.channel) || (raw.body && raw.body.event && raw.body.event.channel);
+        const timestamp = raw.ts
+          || raw.event_ts
+          || (raw.event && (raw.event.ts || raw.event.event_ts))
+          || (raw.body && raw.body.event && (raw.body.event.ts || raw.body.event.event_ts))
+          || msg.message.thread_ts
+          || envelopeMsg.ts
+          || envelopeMsg.thread_ts;
+        if (derivedChannel && timestamp) return { channel: derivedChannel, timestamp };
       }
       // Other adapters can be added here in the future
       return null;
@@ -520,7 +528,12 @@ IMPORTANT: Keep the summary under 600 characters.`;
       if (adapterType === 'slack') {
         const target = getReactionTarget(msg, adapterType);
         const addFn = robot?.adapter?.client?.web?.reactions?.add;
-        if (!target || typeof addFn !== 'function') return false;
+        if (!target || typeof addFn !== 'function') {
+          robot.logger.debug(
+            `Skipping reaction add (${adapterType}): target=${target ? 'ok' : 'missing'} addFn=${typeof addFn === 'function' ? 'ok' : 'missing'}`
+          );
+          return false;
+        }
         await addFn({ name, channel: target.channel, timestamp: target.timestamp });
         return true;
       }

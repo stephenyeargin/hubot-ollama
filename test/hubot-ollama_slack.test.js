@@ -140,5 +140,54 @@ describe('hubot-ollama slack', () => {
       });
     });
 
+    it('derives reaction target from Slack Events-style raw message envelope', async () => {
+      process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'false';
+      room.destroy();
+      room = await helper.createRoom();
+      ['debug', 'info', 'warning', 'error'].forEach((method) => {
+        room.robot.logger[method] = vi.fn();
+      });
+
+      const addReaction = vi.fn().mockResolvedValue({ ok: true });
+      const removeReaction = vi.fn().mockResolvedValue({ ok: true });
+      room.robot.adapter.client = {
+        web: {
+          reactions: {
+            add: addReaction,
+            remove: removeReaction
+          }
+        }
+      };
+
+      nock(OLLAMA_HOST)
+        .post('/api/show', { name: 'llama3.2' })
+        .reply(200, { capabilities: [] });
+
+      mockOllamaChat('Hello from Slack envelope payload.');
+
+      await room.user.say('alice', createMockTextMessage('hubot ask hello', {
+        room: null,
+        rawMessage: {
+          event: {
+            channel: 'D05PXMQH295',
+            ts: '1778993655.375269'
+          }
+        }
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(addReaction).toHaveBeenCalledWith({
+        name: 'thought_balloon',
+        channel: 'D05PXMQH295',
+        timestamp: '1778993655.375269'
+      });
+
+      expect(removeReaction).toHaveBeenCalledWith({
+        name: 'thought_balloon',
+        channel: 'D05PXMQH295',
+        timestamp: '1778993655.375269'
+      });
+    });
+
   });
 });
