@@ -35,6 +35,7 @@ describe('hubot-ollama slack', () => {
     delete process.env.HUBOT_OLLAMA_HOST;
     delete process.env.HUBOT_OLLAMA_API_KEY;
     delete process.env.HUBOT_OLLAMA_TOOLS_ENABLED;
+    delete process.env.HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK;
   });  // Helper to create a mock Ollama API response
   const mockOllamaChat = (response, options = {}) => {
     const scope = nock(OLLAMA_HOST)

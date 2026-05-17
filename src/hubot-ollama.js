@@ -500,8 +500,10 @@ IMPORTANT: Keep the summary under 600 characters.`;
     try {
       if (!msg || !msg.message) return null;
       if (adapterType === 'slack') {
-        const channel = msg.message.room;
-        const raw = msg.message.rawMessage || {};
+        // catchAll wraps the original TextMessage in msg.message.message.
+        const sourceMessage = msg.message.message || msg.message;
+        const channel = sourceMessage.room;
+        const raw = sourceMessage.rawMessage || {};
         const envelopeMsg = (msg.envelope && msg.envelope.message) || {};
         // Support both adapter-normalized message shape and Slack Events API envelope shape.
         const derivedChannel = channel || raw.channel || (raw.event && raw.event.channel) || (raw.body && raw.body.event && raw.body.event.channel);
@@ -509,7 +511,7 @@ IMPORTANT: Keep the summary under 600 characters.`;
           || raw.event_ts
           || (raw.event && (raw.event.ts || raw.event.event_ts))
           || (raw.body && raw.body.event && (raw.body.event.ts || raw.body.event.event_ts))
-          || msg.message.thread_ts
+          || sourceMessage.thread_ts
           || envelopeMsg.ts
           || envelopeMsg.thread_ts;
         if (derivedChannel && timestamp) return { channel: derivedChannel, timestamp };
