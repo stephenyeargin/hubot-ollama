@@ -36,7 +36,7 @@ const createJavaScriptReplTool = require('./tools/javascript-repl-tool');
 const createWebFetchTool = require('./tools/web-fetch-tool');
 const createWebSearchTool = require('./tools/web-search-tool');
 const { applyLoggerShims } = require('./utils/hubot-compat');
-const { getAdapterType, sanitizeText } = require('./utils/ollama-utils');
+const { getAdapterType, sanitizeText, sanitizeSlackBroadcasts, detectPromptInjection } = require('./utils/ollama-utils');
 const { convertToSlackFormat } = require('./utils/slack-formatter');
 
 module.exports = (robot) => {
@@ -474,8 +474,8 @@ IMPORTANT: Keep the summary under 600 characters.`;
     const adapterType = getAdapterType(robot);
 
     if (adapterType === 'slack') {
-      // Convert markdown to Slack-compatible format
-      const slackText = convertToSlackFormat(response);
+      // Convert markdown to Slack-compatible format, then strip broadcast mentions
+      const slackText = sanitizeSlackBroadcasts(convertToSlackFormat(response));
 
       const formatted = {
         text: slackText,
@@ -625,8 +625,10 @@ IMPORTANT: Keep the summary under 600 characters.`;
     // Web search is now handled by the registered tool, so no need for explicit logic here
     // The tool registry will invoke hubot_ollama_web_search if the model selects it
 
-    // Add current user prompt
-    messages.push({ role: 'user', content: finalUserPrompt });
+    // Add current user prompt — wrapped in structural delimiters to reduce delimiter
+    // injection risk (model can still be tricked, but explicit delimiters make it harder
+    // to craft input that blends with system-level instructions).
+    messages.push({ role: 'user', content: `<user_input>${finalUserPrompt}</user_input>` });
     robot.logger.debug(`Assembled ${messages.length} messages for chat API`);
 
     // Track interaction statistics
@@ -1143,6 +1145,11 @@ IMPORTANT: Keep the summary under 600 characters.`;
     if (sanitizedPrompt.length > MAX_PROMPT_CHARS) {
       sanitizedPrompt = `${sanitizedPrompt.slice(0, MAX_PROMPT_CHARS)}...`;
       wasTruncated = true;
+    }
+
+    // Detect and log prompt injection attempts
+    if (detectPromptInjection(sanitizedPrompt)) {
+      robot.logger.warn(`Possible prompt injection attempt detected from user=${getUserInfo(msg).name} room=${(msg && msg.message && msg.message.room) || 'unknown'}`);
     }
 
     // Get conversation history and summary for this user/room
