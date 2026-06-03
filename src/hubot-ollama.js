@@ -482,8 +482,8 @@ IMPORTANT: Keep the summary under 600 characters.`;
         mrkdwn: true,
       };
 
-      // If CONTEXT_SCOPE is 'thread' and message is in a thread, reply in the thread
-      if (CONTEXT_SCOPE === 'thread' && msg && msg.message) {
+      // Always reply in the thread if the triggering message is in a thread
+      if (msg && msg.message) {
         const threadId = getThreadId(msg);
         if (threadId) {
           formatted.thread_ts = threadId;
