@@ -197,11 +197,14 @@ module.exports = (robot) => {
   // Get conversation context key for a user in a room
   const getThreadId = (msg) => {
     if (!msg || !msg.message) return null;
-    const m = msg.message;
-    // Common adapter patterns (Slack, etc.)
+    // catchAll wraps the original TextMessage in msg.message.message
+    const m = msg.message.message || msg.message;
+    const raw = m.rawMessage || {};
     return (
       m.thread_id || m.threadId || m.thread_ts ||
-      (m.rawMessage && (m.rawMessage.thread_ts || m.rawMessage.threadId)) ||
+      raw.thread_ts || raw.threadId ||
+      (raw.event && (raw.event.thread_ts || raw.event.threadId)) ||
+      (raw.body && raw.body.event && (raw.body.event.thread_ts || raw.body.event.threadId)) ||
       (msg.envelope && msg.envelope.message && (msg.envelope.message.thread_ts || msg.envelope.message.threadId)) ||
       null
     );
