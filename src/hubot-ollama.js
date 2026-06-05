@@ -485,11 +485,22 @@ IMPORTANT: Keep the summary under 600 characters.`;
         mrkdwn: true,
       };
 
-      // Always reply in the thread if the triggering message is in a thread
+      // Reply in the thread if the triggering message is already in one
       if (msg && msg.message) {
         const threadId = getThreadId(msg);
         if (threadId) {
           formatted.thread_ts = threadId;
+        } else if (CONTEXT_SCOPE === 'thread') {
+          // Start a new thread anchored to the triggering message's own ts
+          const sourceMessage = msg.message.message || msg.message;
+          const raw = sourceMessage.rawMessage || {};
+          const envelopeMsg = (msg.envelope && msg.envelope.message) || {};
+          const msgTs = raw.ts
+            || raw.event_ts
+            || (raw.event && (raw.event.ts || raw.event.event_ts))
+            || (raw.body && raw.body.event && (raw.body.event.ts || raw.body.event.event_ts))
+            || envelopeMsg.ts;
+          if (msgTs) formatted.thread_ts = msgTs;
         }
       }
 

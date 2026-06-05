@@ -191,4 +191,121 @@ describe('hubot-ollama slack', () => {
     });
 
   });
+
+  describe('Thread scope (HUBOT_OLLAMA_CONTEXT_SCOPE=thread)', () => {
+    beforeEach(async () => {
+      room.destroy();
+      process.env.HUBOT_OLLAMA_CONTEXT_SCOPE = 'thread';
+      room = await helper.createRoom();
+      ['debug', 'info', 'warning', 'error'].forEach((method) => {
+        room.robot.logger[method] = vi.fn();
+      });
+    });
+
+    afterEach(() => {
+      delete process.env.HUBOT_OLLAMA_CONTEXT_SCOPE;
+    });
+
+    it('should start a new thread when the triggering message is not already in one', async () => {
+      nock(OLLAMA_HOST)
+        .post('/api/show', { name: 'llama3.2' })
+        .reply(200, { capabilities: [] });
+
+      mockOllamaChat('Thread reply');
+
+      await room.user.say('alice', createMockTextMessage('hubot ask hello', {
+        rawMessage: {
+          ts: '1700000000.000001'
+        }
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      const lastMessage = room.messages[room.messages.length - 1];
+      expect(lastMessage[1]).toMatchObject({
+        text: 'Thread reply',
+        mrkdwn: true,
+        thread_ts: '1700000000.000001',
+      });
+    });
+
+    it('should reply in the existing thread when the triggering message is already in one', async () => {
+      nock(OLLAMA_HOST)
+        .post('/api/show', { name: 'llama3.2' })
+        .reply(200, { capabilities: [] });
+
+      mockOllamaChat('Thread reply');
+
+      await room.user.say('alice', createMockTextMessage('hubot ask hello', {
+        rawMessage: {
+          ts: '1700000000.000002',
+          thread_ts: '1700000000.000001',
+        }
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      const lastMessage = room.messages[room.messages.length - 1];
+      expect(lastMessage[1]).toMatchObject({
+        text: 'Thread reply',
+        mrkdwn: true,
+        thread_ts: '1700000000.000001',
+      });
+    });
+  });
+
+  describe('Non-thread scopes (HUBOT_OLLAMA_CONTEXT_SCOPE=room)', () => {
+    beforeEach(async () => {
+      room.destroy();
+      process.env.HUBOT_OLLAMA_CONTEXT_SCOPE = 'room';
+      room = await helper.createRoom();
+      ['debug', 'info', 'warning', 'error'].forEach((method) => {
+        room.robot.logger[method] = vi.fn();
+      });
+    });
+
+    afterEach(() => {
+      delete process.env.HUBOT_OLLAMA_CONTEXT_SCOPE;
+    });
+
+    it('should not add thread_ts when triggering message is not in a thread', async () => {
+      nock(OLLAMA_HOST)
+        .post('/api/show', { name: 'llama3.2' })
+        .reply(200, { capabilities: [] });
+
+      mockOllamaChat('Room reply');
+
+      await room.user.say('alice', createMockTextMessage('hubot ask hello', {
+        rawMessage: {
+          ts: '1700000000.000003'
+        }
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      const lastMessage = room.messages[room.messages.length - 1];
+      expect(lastMessage[1]).toMatchObject({ text: 'Room reply', mrkdwn: true });
+      expect(lastMessage[1]).not.toHaveProperty('thread_ts');
+    });
+
+    it('should reply in the thread when triggering message is already in one', async () => {
+      nock(OLLAMA_HOST)
+        .post('/api/show', { name: 'llama3.2' })
+        .reply(200, { capabilities: [] });
+
+      mockOllamaChat('Room thread reply');
+
+      await room.user.say('alice', createMockTextMessage('hubot ask hello', {
+        rawMessage: {
+          ts: '1700000000.000004',
+          thread_ts: '1700000000.000003',
+        }
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      const lastMessage = room.messages[room.messages.length - 1];
+      expect(lastMessage[1]).toMatchObject({
+        text: 'Room thread reply',
+        mrkdwn: true,
+        thread_ts: '1700000000.000003',
+      });
+    });
+  });
 });
