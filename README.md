@@ -279,6 +279,7 @@ Both local and cloud models share the same API, making the integration seamless 
 ## Development
 Run tests & lint:
 ```bash
+npm install
 npm test
 npm run lint
 ```

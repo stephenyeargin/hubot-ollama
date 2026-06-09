@@ -12,7 +12,10 @@ if [ -f .env.${NODE_ENV} ]; then
   source .env.${NODE_ENV}
 fi
 
-npm install
+if [ ! -d node_modules ]; then
+  echo "Dependencies are not installed. Run 'npm install' or 'npm ci' first." >&2
+  exit 1
+fi
 
-# Make sure mocha ison the path
+# Make sure project binaries are on the path
 export PATH="node_modules/.bin:$PATH"
