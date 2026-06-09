@@ -2,7 +2,7 @@
 // Performs web search and returns ONLY metadata (title, url, snippet)
 // Fetching is handled by a separate hubot_ollama_web_fetch tool
 
-const { getAdapterType } = require('../utils/ollama-utils');
+const { getAdapterType, getSlackThreadTs } = require('../utils/ollama-utils');
 
 const ollamaClient = require('./ollama-client');
 
@@ -34,7 +34,7 @@ module.exports = (ollama, config, logger) => ({
         if (getAdapterType(robot) === 'slack') {
           const userId = msg?.message?.user?.id || msg?.message?.user?.name || '';
           const mention = userId ? `<@${userId}> ` : '';
-          const threadTs = msg?.message?.thread_ts || msg?.message?.ts || msg?.message?.rawMessage?.ts || undefined;
+          const threadTs = getSlackThreadTs(msg);
           msg.send({ text: `${mention}${statusText}`, mrkdwn: true, thread_ts: threadTs });
         } else {
           msg.reply(statusText);

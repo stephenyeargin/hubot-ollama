@@ -1,7 +1,7 @@
 // Web fetch tool for Ollama integration
 // Fetches content from URLs selected by the model
 
-const { getAdapterType } = require('../utils/ollama-utils');
+const { getAdapterType, getSlackThreadTs } = require('../utils/ollama-utils');
 
 const ollamaClient = require('./ollama-client');
 
@@ -101,7 +101,7 @@ module.exports = (ollama, config, logger) => ({
 
           const userId = msg?.message?.user?.id || msg?.message?.user?.name || '';
           const mention = userId ? `<@${userId}> ` : '';
-          const threadTs = msg?.message?.thread_ts || msg?.message?.ts || msg?.message?.rawMessage?.ts || undefined;
+          const threadTs = getSlackThreadTs(msg);
           msg.send({ text: `${mention}${statusText}`, mrkdwn: true, unfurl_links: false, unfurl_media: false, thread_ts: threadTs });
         } else {
           // Non-Slack: plain domains text

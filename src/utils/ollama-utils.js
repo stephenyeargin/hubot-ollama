@@ -68,10 +68,58 @@ function detectPromptInjection(text) {
   return PROMPT_INJECTION_PATTERNS.some(pattern => pattern.test(text));
 }
 
+/**
+ * Return the thread_ts of an existing thread the message belongs to, or null.
+ * Does NOT fall back to the message's own ts — use this when you need to know
+ * whether the message is already inside a thread (e.g. context key scoping).
+ * @param {object} msg - Hubot response object
+ * @returns {string|null}
+ */
+function getExistingSlackThread(msg) {
+  if (!msg || !msg.message) return null;
+  const m = msg.message.message || msg.message;
+  const raw = m.rawMessage || {};
+  const envelopeMsg = (msg.envelope && msg.envelope.message) || {};
+  return (
+    m.thread_id || m.threadId || m.thread_ts ||
+    raw.thread_ts || raw.threadId ||
+    (raw.event && (raw.event.thread_ts || raw.event.threadId)) ||
+    (raw.body && raw.body.event && (raw.body.event.thread_ts || raw.body.event.threadId)) ||
+    envelopeMsg.thread_ts || envelopeMsg.threadId || null
+  );
+}
+
+/**
+ * Resolve the best available thread_ts to use when replying to a Slack message.
+ * Returns an existing thread_ts when the message is already in a thread,
+ * or falls back to the message's own ts (anchoring a new thread).
+ * Handles both normal respond() messages and catchAll-wrapped messages,
+ * plus the various Slack adapter rawMessage shapes (bolt events API, classic).
+ * @param {object} msg - Hubot response object
+ * @returns {string|undefined}
+ */
+function getSlackThreadTs(msg) {
+  const existing = getExistingSlackThread(msg);
+  if (existing) return existing;
+
+  if (!msg || !msg.message) return undefined;
+  const m = msg.message.message || msg.message;
+  const raw = m.rawMessage || {};
+  const envelopeMsg = (msg.envelope && msg.envelope.message) || {};
+  return raw.ts
+    || raw.event_ts
+    || (raw.event && (raw.event.ts || raw.event.event_ts))
+    || (raw.body && raw.body.event && (raw.body.event.ts || raw.body.event.event_ts))
+    || envelopeMsg.ts
+    || undefined;
+}
+
 module.exports = {
   sanitizeText,
   sanitizeSlackBroadcasts,
   detectPromptInjection,
   truncate,
   getAdapterType,
+  getExistingSlackThread,
+  getSlackThreadTs,
 };

@@ -36,7 +36,7 @@ const createJavaScriptReplTool = require('./tools/javascript-repl-tool');
 const createWebFetchTool = require('./tools/web-fetch-tool');
 const createWebSearchTool = require('./tools/web-search-tool');
 const { applyLoggerShims } = require('./utils/hubot-compat');
-const { getAdapterType, sanitizeText, sanitizeSlackBroadcasts, detectPromptInjection } = require('./utils/ollama-utils');
+const { getAdapterType, sanitizeText, sanitizeSlackBroadcasts, detectPromptInjection, getExistingSlackThread, getSlackThreadTs } = require('./utils/ollama-utils');
 const { convertToSlackFormat } = require('./utils/slack-formatter');
 
 module.exports = (robot) => {
@@ -195,20 +195,6 @@ module.exports = (robot) => {
   const summarizationInProgress = {};
 
   // Get conversation context key for a user in a room
-  const getThreadId = (msg) => {
-    if (!msg || !msg.message) return null;
-    // catchAll wraps the original TextMessage in msg.message.message
-    const m = msg.message.message || msg.message;
-    const raw = m.rawMessage || {};
-    return (
-      m.thread_id || m.threadId || m.thread_ts ||
-      raw.thread_ts || raw.threadId ||
-      (raw.event && (raw.event.thread_ts || raw.event.threadId)) ||
-      (raw.body && raw.body.event && (raw.body.event.thread_ts || raw.body.event.threadId)) ||
-      (msg.envelope && msg.envelope.message && (msg.envelope.message.thread_ts || msg.envelope.message.threadId)) ||
-      null
-    );
-  };
 
   // Extract user information from message, with fallback options
   const getUserInfo = (msg) => {
@@ -366,7 +352,7 @@ IMPORTANT: Keep the summary under 600 characters.`;
     const roomId = (msg && msg.message && msg.message.room) || 'direct';
     let key;
     if (CONTEXT_SCOPE === 'thread') {
-      const threadId = getThreadId(msg);
+      const threadId = getExistingSlackThread(msg);
       if (threadId) {
         key = `${roomId}#${threadId}`;
       } else {
@@ -485,21 +471,15 @@ IMPORTANT: Keep the summary under 600 characters.`;
         mrkdwn: true,
       };
 
-      // Reply in the thread if the triggering message is already in one
+      // Reply in the thread if the triggering message is already in one,
+      // or start a new thread when CONTEXT_SCOPE is 'thread'.
       if (msg && msg.message) {
-        const threadId = getThreadId(msg);
-        if (threadId) {
-          formatted.thread_ts = threadId;
+        const existingThread = getExistingSlackThread(msg);
+        if (existingThread) {
+          formatted.thread_ts = existingThread;
         } else if (CONTEXT_SCOPE === 'thread') {
-          // Start a new thread anchored to the triggering message's own ts
-          const sourceMessage = msg.message.message || msg.message;
-          const raw = sourceMessage.rawMessage || {};
-          const envelopeMsg = (msg.envelope && msg.envelope.message) || {};
-          const msgTs = raw.ts
-            || raw.event_ts
-            || (raw.event && (raw.event.ts || raw.event.event_ts))
-            || (raw.body && raw.body.event && (raw.body.event.ts || raw.body.event.event_ts))
-            || envelopeMsg.ts;
+          // getSlackThreadTs falls back to the message's own ts when no existing thread
+          const msgTs = getSlackThreadTs(msg);
           if (msgTs) formatted.thread_ts = msgTs;
         }
       }
