@@ -53,6 +53,8 @@ Prompts are sanitized and truncated if they exceed the configured limit.
 | `HUBOT_OLLAMA_CONTEXT_TURNS` | Optional | `5` | Maximum number of conversation turns to remember |
 | `HUBOT_OLLAMA_CONTEXT_SCOPE` | Optional | `room-user` | Context isolation: `room-user`, `room`, or `thread` |
 | `HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK` | Optional | `false` | Enable fallback replies for addressed messages when no other listener matched |
+| `HUBOT_OLLAMA_AMBIENT_CONTEXT` | Optional | `false` | Passively capture recent room messages as background context for answers |
+| `HUBOT_OLLAMA_AMBIENT_CONTEXT_SIZE` | Optional | `10` | Number of recent ambient messages to retain per room |
 | `HUBOT_OLLAMA_WEB_ENABLED` | Optional | `false` | Enable web-assisted workflow that can search/fetch context |
 | `HUBOT_OLLAMA_WEB_MAX_RESULTS` | Optional | `5` | Max search results to use (capped at 10) |
 | `HUBOT_OLLAMA_WEB_FETCH_CONCURRENCY` | Optional | `3` | Parallel fetch concurrency |
@@ -95,6 +97,12 @@ Enable addressed fallback mode:
 export HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK=true
 ```
 
+Enable ambient context:
+```bash
+export HUBOT_OLLAMA_AMBIENT_CONTEXT=true
+export HUBOT_OLLAMA_AMBIENT_CONTEXT_SIZE=15  # optional, default 10
+```
+
 ### Addressed Fallback Mode
 When `HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK=true`, hubot-ollama can answer without `ask`/`ollama`/`llm` prefixes, but only as a fallback.
 
@@ -111,6 +119,22 @@ hubot ask explain vector embeddings
 hubot llm generate a short motivational quote
 hubot ollama compare sql vs nosql
 ```
+
+### Ambient Context
+When `HUBOT_OLLAMA_AMBIENT_CONTEXT=true`, the bot passively listens to recent room conversation and uses it as background context when answering questions — without users needing to repeat themselves.
+
+```text
+Bob>   We have that conference in Tampa next week.
+Alice> Hopefully we'll get some good sales leads.
+Bob>   Yep, should be great.
+Bob>   hubot ask What should I pack for the trip?
+Hubot> Weather in Tampa next week looks to be sunny and warm. I'd skip the heavy suit.
+```
+
+- Opt-in only (`HUBOT_OLLAMA_AMBIENT_CONTEXT=false` by default)
+- Only captures undirected room messages — messages addressed to the bot are excluded
+- Stores the last `HUBOT_OLLAMA_AMBIENT_CONTEXT_SIZE` messages per room in a ring buffer (not persisted across restarts)
+- Direct messages are never captured
 
 ### Web-Enabled Workflow
 When `HUBOT_OLLAMA_WEB_ENABLED=true` and the connected Ollama host supports web tools, the bot registers `hubot_ollama_web_search` and the LLM can invoke it directly. The flow now is:

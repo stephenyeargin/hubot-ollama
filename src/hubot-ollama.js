@@ -18,6 +18,8 @@
 //   HUBOT_OLLAMA_WEB_MAX_BYTES - Max bytes of fetched content per page (default: 120000)
 //   HUBOT_OLLAMA_WEB_TIMEOUT_MS - Overall timeout for web phase (default: 45000)
 //   HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK - Enable fallback replies for addressed messages when no other listener matches (default: false)
+//   HUBOT_OLLAMA_AMBIENT_CONTEXT - Passively capture recent room messages as background context for answers (default: false)
+//   HUBOT_OLLAMA_AMBIENT_CONTEXT_SIZE - Number of recent ambient messages to retain per room (default: 10)
 //
 // Commands:
 //   hubot ask <prompt> - Ask Ollama a question
@@ -28,6 +30,7 @@
 /** @typedef {import('ollama').ToolCall} OllamaToolCall */
 /** @typedef {import('ollama').ChatResponse} OllamaChatResponse */
 
+const { CatchAllMessage } = require('hubot');
 const { Ollama } = require('ollama');
 
 const registry = require('./tool-registry');
@@ -62,6 +65,8 @@ module.exports = (robot) => {
   const WEB_MAX_BYTES = Math.max(1024, Number.parseInt(process.env.HUBOT_OLLAMA_WEB_MAX_BYTES || '120000', 10));
   const WEB_TIMEOUT_MS = Math.max(1000, Number.parseInt(process.env.HUBOT_OLLAMA_WEB_TIMEOUT_MS || '45000', 10));
   const RESPOND_TO_ADDRESSED_FALLBACK = /^(?:1|true|yes)$/i.test(process.env.HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK || '');
+  const AMBIENT_CONTEXT = /^(?:1|true|yes)$/i.test(process.env.HUBOT_OLLAMA_AMBIENT_CONTEXT || '');
+  const AMBIENT_CONTEXT_SIZE = Math.max(1, Number.parseInt(process.env.HUBOT_OLLAMA_AMBIENT_CONTEXT_SIZE || '10', 10));
 
   // Emoji used with compatible adapters to indicate processing state
   const REQUEST_THINKING_EMOJI = 'thought_balloon';
@@ -69,6 +74,19 @@ module.exports = (robot) => {
 
   // For formatting instructions
   const adapterName = robot.adapterName ?? robot.adapter?.name;
+
+  // In-memory ring buffer of recent undirected room messages, keyed by room ID.
+  // Not persisted — ambient context is intentionally ephemeral.
+  const ambientBuffer = new Map();
+
+  const pushAmbient = (roomId, userName, text) => {
+    if (!ambientBuffer.has(roomId)) ambientBuffer.set(roomId, []);
+    const buf = ambientBuffer.get(roomId);
+    buf.push({ userName, text });
+    if (buf.length > AMBIENT_CONTEXT_SIZE) buf.shift();
+  };
+
+  const getAmbientMessages = (roomId) => ambientBuffer.get(roomId) || [];
 
   // Build the complete default system prompt
   const getDefaultInstructionPrompt = () => {
@@ -608,6 +626,17 @@ IMPORTANT: Keep the summary under 600 characters.`;
         }
         messages.push({ role: 'user', content: userContent });
         messages.push({ role: 'assistant', content: turn.assistant });
+      }
+    }
+
+    // Inject recent ambient room messages as background context
+    if (AMBIENT_CONTEXT) {
+      const roomId = msg && msg.message && (msg.message.room || (msg.message.user && msg.message.user.room));
+      const ambient = roomId ? getAmbientMessages(roomId) : [];
+      if (ambient.length > 0) {
+        const formatted = ambient.map(m => `${m.userName}: ${m.text}`).join('\n');
+        messages.push({ role: 'system', content: `Recent room conversation:\n${formatted}` });
+        robot.logger.debug(`Injected ${ambient.length} ambient messages from room ${roomId}`);
       }
     }
 
@@ -1175,6 +1204,25 @@ IMPORTANT: Keep the summary under 600 characters.`;
       if (reactionAdded) await removeThinkingReaction(msg, REQUEST_THINKING_EMOJI);
     }
   };
+
+  // Passively capture undirected room messages for ambient context.
+  // Uses receiveMiddleware rather than robot.hear() so that catchAll listeners
+  // (e.g. RESPOND_TO_ADDRESSED_FALLBACK) are not blocked — a matching hear()
+  // listener prevents catchAll from firing in Hubot v14.
+  if (AMBIENT_CONTEXT) {
+    robot.receiveMiddleware(async (context) => {
+      const message = context.response && context.response.message;
+      if (!message || message instanceof CatchAllMessage) return;
+      if (isDirectMessage(message)) return;
+      const text = (message.text || '').trim();
+      if (!text) return;
+      if (extractAddressedFallbackPrompt(text)) return;
+      const roomId = message.room || (message.user && message.user.room);
+      if (!roomId) return;
+      const userName = (message.user && (message.user.real_name || message.user.name)) || 'Unknown';
+      pushAmbient(roomId, userName, text);
+    });
+  }
 
   // Main command handler
   robot.respond(/(?:ask|ollama|llm):?\s+(.+)/i, async (msg) => {
