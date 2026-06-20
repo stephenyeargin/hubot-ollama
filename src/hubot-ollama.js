@@ -30,7 +30,6 @@
 /** @typedef {import('ollama').ToolCall} OllamaToolCall */
 /** @typedef {import('ollama').ChatResponse} OllamaChatResponse */
 
-const { CatchAllMessage } = require('hubot');
 const { Ollama } = require('ollama');
 
 const registry = require('./tool-registry');
@@ -1212,7 +1211,7 @@ IMPORTANT: Keep the summary under 600 characters.`;
   if (AMBIENT_CONTEXT) {
     robot.receiveMiddleware(async (context) => {
       const message = context.response && context.response.message;
-      if (!message || message instanceof CatchAllMessage) return;
+      if (!message || message.constructor?.name === 'CatchAllMessage') return;
       if (isDirectMessage(message)) return;
       const text = (message.text || '').trim();
       if (!text) return;
