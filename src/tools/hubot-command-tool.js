@@ -149,18 +149,22 @@ module.exports = (_ollama, _config, logger) => ({
 
     logger?.info(`hubot_ollama_run_command: invoking "${commandText}" as user=${msg.message.user.name || msg.message.user.id}`);
 
+    let hardTimeoutId;
+    const hardTimeout = new Promise((_resolve, reject) => {
+      hardTimeoutId = setTimeout(() => reject(new Error('Command timed out')), LISTENER_TIMEOUT_MS);
+    });
+
     try {
       const syntheticMessage = new Hubot.TextMessage(msg.message.user, commandText);
-      await Promise.race([
-        robot.receive(syntheticMessage),
-        new Promise((_resolve, reject) => setTimeout(() => reject(new Error('Command timed out')), LISTENER_TIMEOUT_MS))
-      ]);
+      await Promise.race([robot.receive(syntheticMessage), hardTimeout]);
+      clearTimeout(hardTimeoutId);
 
       // robot.receive() resolving only means the listener's own synchronous/awaited
       // work is done — give it a chance to settle before deciding there's no response.
       armSettleTimer(SETTLE_GRACE_MS);
       await settled;
     } finally {
+      clearTimeout(hardTimeoutId);
       clearTimeout(settleTimer);
       adapter.send = rawSend;
       adapter.reply = rawReply;
