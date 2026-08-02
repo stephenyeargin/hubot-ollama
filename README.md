@@ -201,6 +201,9 @@ answer a question (e.g. "what projects are inflight" → runs `hubot project lis
 state-changing (create/delete/rename/etc.) are refused unless the model was explicitly told by the user to
 perform that exact action. This is disabled by default because it lets the LLM trigger other scripts' side
 effects — only enable it if you trust the model/prompting setup and the scripts installed alongside it.
+Invoked commands that respond asynchronously (e.g. acknowledge immediately, then send the real reply once a
+non-awaited HTTP call finishes) get up to 10 seconds of quiet after their last reply chunk before the tool
+gives up and reports no response.
 
 ```bash
 export HUBOT_OLLAMA_COMMAND_TOOL_ENABLED=true

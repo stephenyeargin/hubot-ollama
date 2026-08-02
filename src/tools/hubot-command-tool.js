@@ -17,6 +17,22 @@
 // direct case; activeInvocations tracks in-flight runs per acting user/room so
 // any indirect cycle is refused too, regardless of how many commands sit between
 // the first call and the one that loops back.
+//
+// Settling: robot.receive() only awaits the promise a listener's own callback
+// returns — many hubot scripts issue a Node-callback-style HTTP request (e.g.
+// robot.http(...).get()((err, res, body) => msg.send(...))) without awaiting
+// it, so the callback returns, and robot.receive() resolves, before the actual
+// response is sent. Some scripts also acknowledge synchronously ("Working on
+// it...") and then send the real answer once a slow HTTP call finishes. Since
+// there's no way to tell an ack apart from a final answer, every capture —
+// the first one or a later one — resets the same SETTLE_GRACE_MS window; we
+// only conclude the response is complete once that long a quiet period has
+// passed with nothing new arriving. This trades latency (every invocation
+// waits out the window once nothing more shows up) for not silently dropping
+// slow follow-ups.
+
+const LISTENER_TIMEOUT_MS = 10000; // hard cap in case robot.receive() itself never resolves
+const SETTLE_GRACE_MS = 10000; // quiet period required (after receive() resolves, and after each capture) before concluding the response is complete
 
 const MUTATING_VERBS = /\b(create|delete|remove|close|rename|set|update|disable|enable|revoke|add|kick|ban|deploy|restart|kill|purge|drop|clear|archive|invite|grant|assign|unassign|merge|approve|reject|cancel|start|stop|pause|resume|reset|promote|demote|mute|unmute|block|unblock|lock|unlock)\b/i;
 
@@ -109,10 +125,19 @@ module.exports = (_ollama, _config, logger) => ({
     const rawEmote = adapter.emote;
     const forwardSend = typeof rawSend === 'function' ? rawSend.bind(adapter) : null;
 
+    let settleResolve;
+    let settleTimer;
+    const settled = new Promise((resolve) => { settleResolve = resolve; });
+    const armSettleTimer = (ms) => {
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => settleResolve(), ms);
+    };
+
     const capture = (envelope, ...strings) => {
       const room = envelope && envelope.room;
       if (room === targetRoom) {
         captured.push(...strings);
+        armSettleTimer(SETTLE_GRACE_MS);
       } else if (forwardSend) {
         forwardSend(envelope, ...strings);
       }
@@ -126,12 +151,17 @@ module.exports = (_ollama, _config, logger) => ({
 
     try {
       const syntheticMessage = new Hubot.TextMessage(msg.message.user, commandText);
-      const TIMEOUT_MS = 15000;
       await Promise.race([
         robot.receive(syntheticMessage),
-        new Promise((_resolve, reject) => setTimeout(() => reject(new Error('Command timed out')), TIMEOUT_MS))
+        new Promise((_resolve, reject) => setTimeout(() => reject(new Error('Command timed out')), LISTENER_TIMEOUT_MS))
       ]);
+
+      // robot.receive() resolving only means the listener's own synchronous/awaited
+      // work is done — give it a chance to settle before deciding there's no response.
+      armSettleTimer(SETTLE_GRACE_MS);
+      await settled;
     } finally {
+      clearTimeout(settleTimer);
       adapter.send = rawSend;
       adapter.reply = rawReply;
       adapter.emote = rawEmote;
