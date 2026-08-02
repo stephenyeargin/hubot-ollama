@@ -46,6 +46,15 @@ const escapeRegex = (value) => String(value).replace(/[-[\]{}()*+?.,\\^$|#\s]/g,
 // created below, since the registry holds a single instance of it.
 const activeInvocations = new Set();
 
+// hubot ships ESM-only, so it must be loaded via dynamic import() from this
+// CJS file. Kick that off once, right here at module-eval time (i.e. as soon
+// as this file is require()d — before any test's fake timers are installed),
+// and reuse the resolved module on every handler call thereafter. A cold
+// import() triggered later, inside a handler call, has been observed to
+// resolve unreliably slowly under certain Node/test-timer combinations.
+const hubotModulePromise = import('hubot').then((m) => m.default || m);
+const getHubotModule = () => hubotModulePromise;
+
 module.exports = (_ollama, _config, logger) => ({
   name: 'hubot_ollama_run_command',
   description: 'Run another Hubot command on the user\'s behalf, as if they had typed it themselves, and ' +
@@ -115,7 +124,7 @@ module.exports = (_ollama, _config, logger) => ({
     }
     activeInvocations.add(reentrancyKey);
 
-    const Hubot = await import('hubot').then((m) => m.default || m);
+    const Hubot = await getHubotModule();
     const adapter = robot.adapter;
     const targetRoom = msg.message.user.room;
     const captured = [];
