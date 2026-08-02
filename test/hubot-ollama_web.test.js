@@ -19,7 +19,7 @@ class MockOllama {
     const hasWebSearchTool = req.tools && req.tools.some(t => (t.function && t.function.name) === 'hubot_ollama_web_search');
     const hasWebFetchTool = req.tools && req.tools.some(t => (t.function && t.function.name) === 'hubot_ollama_web_fetch');
 
-    if (req.tools && req.tools.length > 0 && hasWebSearchTool && !req.messages.some(m => m.role === 'user' && typeof m.content === 'string' && /^{/.test(m.content))) {
+    if (req.tools && req.tools.length > 0 && hasWebSearchTool && !req.messages.some(m => m.role === 'user' && typeof m.content === 'string' && /^(?:\{|<tool_result)/.test(m.content))) {
       // Simulate the model choosing the web search tool
       return {
         message: {
@@ -34,10 +34,13 @@ class MockOllama {
       };
     }
 
-    // If this is a tool result message (JSON content from user), check what was returned
-    if (last && last.content && /^{/.test(last.content)) {
+    // If this is a tool result message (JSON content from user, optionally wrapped in
+    // <tool_result> tags), check what was returned
+    const toolResultMatch = last && typeof last.content === 'string' && last.content.match(/^<tool_result[^>]*>([\s\S]*)<\/tool_result>$/);
+    const toolResultJson = toolResultMatch ? toolResultMatch[1] : (last && last.content);
+    if (toolResultJson && /^{/.test(toolResultJson)) {
       try {
-        const result = JSON.parse(last.content);
+        const result = JSON.parse(toolResultJson);
         // New behavior: web search returns results, web fetch returns pages
         if (result.results && hasWebFetchTool) {
           // Simulate model selecting fetch tool after search
