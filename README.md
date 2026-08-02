@@ -55,6 +55,7 @@ Prompts are sanitized and truncated if they exceed the configured limit.
 | `HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK` | Optional | `false` | Enable fallback replies for addressed messages when no other listener matched |
 | `HUBOT_OLLAMA_AMBIENT_CONTEXT` | Optional | `false` | Passively capture recent room messages as background context for answers |
 | `HUBOT_OLLAMA_AMBIENT_CONTEXT_SIZE` | Optional | `10` | Number of recent ambient messages to retain per room |
+| `HUBOT_OLLAMA_COMMAND_TOOL_ENABLED` | Optional | `false` | Allow the LLM to invoke other Hubot commands on the user's behalf and read the response |
 | `HUBOT_OLLAMA_WEB_ENABLED` | Optional | `false` | Enable web-assisted workflow that can search/fetch context |
 | `HUBOT_OLLAMA_WEB_MAX_RESULTS` | Optional | `5` | Max search results to use (capped at 10) |
 | `HUBOT_OLLAMA_WEB_FETCH_CONCURRENCY` | Optional | `3` | Parallel fetch concurrency |
@@ -192,6 +193,18 @@ export HUBOT_OLLAMA_TOOLS_ENABLED=false
 - If tools are enabled AND the model supports them, the two-call workflow activates.
 - If the model doesn't support tools or tools are disabled, the bot falls back to a single-call workflow.
 - When a tool is invoked, the model can request data (like current time) to enhance its response.
+
+**Command Tool (opt-in):**
+When `HUBOT_OLLAMA_COMMAND_TOOL_ENABLED=true`, the bot registers `hubot_ollama_run_command`, letting the model
+look up a command via `hubot_ollama_help`, silently run it on the user's behalf, and read the response to help
+answer a question (e.g. "what projects are inflight" → runs `hubot project list`). Commands that look
+state-changing (create/delete/rename/etc.) are refused unless the model was explicitly told by the user to
+perform that exact action. This is disabled by default because it lets the LLM trigger other scripts' side
+effects — only enable it if you trust the model/prompting setup and the scripts installed alongside it.
+
+```bash
+export HUBOT_OLLAMA_COMMAND_TOOL_ENABLED=true
+```
 
 **Example Tool Interaction:**
 ```text

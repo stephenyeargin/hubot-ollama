@@ -20,6 +20,7 @@
 //   HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK - Enable fallback replies for addressed messages when no other listener matches (default: false)
 //   HUBOT_OLLAMA_AMBIENT_CONTEXT - Passively capture recent room messages as background context for answers (default: false)
 //   HUBOT_OLLAMA_AMBIENT_CONTEXT_SIZE - Number of recent ambient messages to retain per room (default: 10)
+//   HUBOT_OLLAMA_COMMAND_TOOL_ENABLED - Allow the LLM to invoke other Hubot commands on the user's behalf (default: false)
 //
 // Commands:
 //   hubot ask <prompt> - Ask Ollama a question
@@ -33,6 +34,7 @@
 const { Ollama } = require('ollama');
 
 const registry = require('./tool-registry');
+const createHubotCommandTool = require('./tools/hubot-command-tool');
 const createHubotHelpTool = require('./tools/hubot-help-tool');
 const createJavaScriptReplTool = require('./tools/javascript-repl-tool');
 const createWebFetchTool = require('./tools/web-fetch-tool');
@@ -66,6 +68,7 @@ module.exports = (robot) => {
   const RESPOND_TO_ADDRESSED_FALLBACK = /^(?:1|true|yes)$/i.test(process.env.HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK || '');
   const AMBIENT_CONTEXT = /^(?:1|true|yes)$/i.test(process.env.HUBOT_OLLAMA_AMBIENT_CONTEXT || '');
   const AMBIENT_CONTEXT_SIZE = Math.max(1, Number.parseInt(process.env.HUBOT_OLLAMA_AMBIENT_CONTEXT_SIZE || '10', 10));
+  const COMMAND_TOOL_ENABLED = /^(?:1|true|yes)$/i.test(process.env.HUBOT_OLLAMA_COMMAND_TOOL_ENABLED || '');
 
   // Emoji used with compatible adapters to indicate processing state
   const REQUEST_THINKING_EMOJI = 'thought_balloon';
@@ -161,6 +164,18 @@ module.exports = (robot) => {
     handler: hubotHelpTool.handler
   });
   robot.logger.debug('Registered Hubot help tool');
+
+  // Register command tool if explicitly enabled (opt-in: lets the LLM invoke
+  // other Hubot commands on the user's behalf, so it defaults to off)
+  if (TOOLS_ENABLED && COMMAND_TOOL_ENABLED) {
+    const hubotCommandTool = createHubotCommandTool(null, {}, robot.logger);
+    registry.registerTool(hubotCommandTool.name, {
+      description: hubotCommandTool.description,
+      parameters: hubotCommandTool.parameters,
+      handler: hubotCommandTool.handler
+    });
+    robot.logger.debug('Registered Hubot command tool');
+  }
 
   // Register JavaScript REPL tool if tools are enabled
   if (TOOLS_ENABLED) {
