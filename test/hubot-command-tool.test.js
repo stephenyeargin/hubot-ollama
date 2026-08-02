@@ -16,10 +16,27 @@ describe('hubot-command-tool', () => {
 
   // Runs the handler under fake timers and drains every scheduled timer
   // (settle/grace/idle waits) before returning the (possibly rejected) promise.
+  //
+  // A single vi.runAllTimersAsync() call right after starting the promise can
+  // race ahead of it: the handler's first setTimeout isn't created until after
+  // a few microtask hops (e.g. awaiting the already-resolved-but-still-async
+  // hubot import, then the mocked robot.receive()), so a one-shot drain can
+  // find nothing pending yet and return immediately, leaving the real timer to
+  // fire outside fake-timer control — which blew the default 5s test timeout
+  // on a slower CI runner. Looping guarantees every iteration gives pending
+  // microtasks a chance to progress and schedule something new to drain.
+  const drainTimersUntilSettled = async (...promises) => {
+    let isSettled = false;
+    Promise.allSettled(promises).then(() => (isSettled = true)).catch(() => {});
+    for (let i = 0; i < 100 && !isSettled; i++) {
+      await vi.advanceTimersByTimeAsync(1000);
+    }
+  };
+
   const runHandler = async (args, msg = mockMsg) => {
     const promise = tool.handler(args, mockRobot, msg);
     promise.catch(() => {}); // avoid unhandled-rejection noise while timers drain
-    await vi.runAllTimersAsync();
+    await drainTimersUntilSettled(promise);
     return promise;
   };
 
@@ -232,6 +249,9 @@ describe('hubot-command-tool', () => {
 
       // The late send should leak through to the real adapter once capture is
       // torn down — documenting the boundary rather than silently swallowing it.
+      // (runHandler stops draining as soon as the handler settles, so advance
+      // past the still-pending 11s timer explicitly to observe it fire.)
+      await vi.advanceTimersByTimeAsync(2000);
       expect(mockRobot.adapter.send).toHaveBeenCalledWith({ room: 'general' }, 'too late');
     });
 
@@ -295,7 +315,7 @@ describe('hubot-command-tool', () => {
 
       const promiseA = tool.handler({ command: 'project list' }, mockRobot, mockMsg);
       const promiseB = tool.handler({ command: 'project list' }, mockRobot, otherMsg);
-      await vi.runAllTimersAsync();
+      await drainTimersUntilSettled(promiseA, promiseB);
       const [resultA, resultB] = await Promise.all([promiseA, promiseB]);
 
       expect(resultA.response).toBe('response for general');
