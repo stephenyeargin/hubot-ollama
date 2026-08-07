@@ -35,7 +35,7 @@ module.exports = (ollama, config, logger) => ({
     },
     summary: {
       type: 'string',
-      description: 'Short description of the memory (required for save)'
+      description: 'Short description of the memory (optional for save; defaults to a truncated copy of content when omitted)'
     },
     content: {
       type: 'string',
@@ -131,7 +131,7 @@ module.exports = (ollama, config, logger) => ({
       const rawSummaryTrimmed = typeof rawSummary === 'string' ? rawSummary.trim() : '';
       const summarySource = rawSummaryTrimmed || cappedContent;
       const summary = summarySource.length > maxSummaryChars
-        ? `${summarySource.slice(0, maxSummaryChars)}...`
+        ? `${summarySource.slice(0, Math.max(0, maxSummaryChars - 3))}...`
         : summarySource;
 
       const now = Date.now();

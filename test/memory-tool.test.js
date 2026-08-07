@@ -98,17 +98,38 @@ describe('memory-tool', () => {
   });
 
   test('list returns summaries only, sorted by updatedAt desc, no content', async () => {
+    vi.useFakeTimers();
+    try {
+      const robot = makeRobot();
+      const tool = memoryTool(null, makeConfig(), logger);
+
+      vi.setSystemTime(1000);
+      await tool.handler({ action: 'save', key: 'first', summary: 'First', content: 'a' }, robot, msg);
+      vi.setSystemTime(2000);
+      await tool.handler({ action: 'save', key: 'second', summary: 'Second', content: 'b' }, robot, msg);
+
+      const listResult = await tool.handler({ action: 'list' }, robot, msg);
+      expect(listResult.entries).toHaveLength(2);
+      expect(listResult.entries[0].key).toBe('second');
+      expect(listResult.entries[0]).not.toHaveProperty('content');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('truncated summary never exceeds MAX_SUMMARY_CHARS (including the ellipsis)', async () => {
     const robot = makeRobot();
-    const tool = memoryTool(null, makeConfig(), logger);
+    const tool = memoryTool(null, makeConfig({ MAX_SUMMARY_CHARS: 10 }), logger);
 
-    await tool.handler({ action: 'save', key: 'first', summary: 'First', content: 'a' }, robot, msg);
-    await new Promise((resolve) => setTimeout(resolve, 2));
-    await tool.handler({ action: 'save', key: 'second', summary: 'Second', content: 'b' }, robot, msg);
+    const result = await tool.handler(
+      { action: 'save', key: 'k', summary: 'a'.repeat(20), content: 'content' },
+      robot, msg
+    );
+    expect(result.summaryChars).toBeLessThanOrEqual(10);
 
-    const listResult = await tool.handler({ action: 'list' }, robot, msg);
-    expect(listResult.entries).toHaveLength(2);
-    expect(listResult.entries[0].key).toBe('second');
-    expect(listResult.entries[0]).not.toHaveProperty('content');
+    const recallResult = await tool.handler({ action: 'recall', key: 'k' }, robot, msg);
+    expect(recallResult.summary.length).toBeLessThanOrEqual(10);
+    expect(recallResult.summary).toBe('aaaaaaa...');
   });
 
   test('truncates content longer than MAX_CONTENT_CHARS', async () => {
@@ -183,24 +204,30 @@ describe('memory-tool', () => {
   });
 
   test('evicts least-recently-accessed entry when scope is at capacity', async () => {
-    const robot = makeRobot();
-    const tool = memoryTool(null, makeConfig({ MAX_ENTRIES: 2 }), logger);
+    vi.useFakeTimers();
+    try {
+      const robot = makeRobot();
+      const tool = memoryTool(null, makeConfig({ MAX_ENTRIES: 2 }), logger);
 
-    await tool.handler({ action: 'save', key: 'a', content: 'A' }, robot, msg);
-    await new Promise((resolve) => setTimeout(resolve, 2));
-    await tool.handler({ action: 'save', key: 'b', content: 'B' }, robot, msg);
+      vi.setSystemTime(1000);
+      await tool.handler({ action: 'save', key: 'a', content: 'A' }, robot, msg);
+      vi.setSystemTime(2000);
+      await tool.handler({ action: 'save', key: 'b', content: 'B' }, robot, msg);
 
-    // Refresh "a"'s lastAccessedAt so "b" becomes the least-recently-accessed entry
-    await new Promise((resolve) => setTimeout(resolve, 2));
-    await tool.handler({ action: 'recall', key: 'a' }, robot, msg);
+      // Refresh "a"'s lastAccessedAt so "b" becomes the least-recently-accessed entry
+      vi.setSystemTime(3000);
+      await tool.handler({ action: 'recall', key: 'a' }, robot, msg);
 
-    // Saving a new entry should evict "b", not "a"
-    await new Promise((resolve) => setTimeout(resolve, 2));
-    await tool.handler({ action: 'save', key: 'c', content: 'C' }, robot, msg);
+      // Saving a new entry should evict "b", not "a"
+      vi.setSystemTime(4000);
+      await tool.handler({ action: 'save', key: 'c', content: 'C' }, robot, msg);
 
-    const listResult = await tool.handler({ action: 'list' }, robot, msg);
-    const keys = listResult.entries.map((e) => e.key).sort();
-    expect(keys).toEqual(['a', 'c']);
+      const listResult = await tool.handler({ action: 'list' }, robot, msg);
+      const keys = listResult.entries.map((e) => e.key).sort();
+      expect(keys).toEqual(['a', 'c']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   describe('unresolvable context refusal', () => {
