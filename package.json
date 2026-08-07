@@ -53,7 +53,7 @@
   },
   "dependencies": {
     "ascii-table": "^0.0.9",
-    "marked": "^15.0.6",
+    "marked": "^18.0.7",
     "ollama": "^0.6.3"
   }
 }
