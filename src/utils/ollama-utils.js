@@ -69,6 +69,35 @@ function detectPromptInjection(text) {
 }
 
 /**
+ * Common secret/credential shapes, plus a generic labeled-field heuristic
+ * (`key: value` / `key=value` where key looks like a credential field).
+ * Heuristic only, not a security boundary — intended to catch obvious
+ * accidental pastes before they're persisted to long-term storage.
+ */
+const SECRET_PATTERNS = [
+  /AKIA[A-Z0-9]{16}/, // AWS access key ID
+  /sk-[A-Za-z0-9]{20,}/, // OpenAI-style secret key
+  /ghp_[A-Za-z0-9]{36}/, // GitHub personal access token
+  /xox[baprs]-[A-Za-z0-9-]+/i, // Slack token
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/, // PEM private key
+  // Labeled field, e.g. `password: x`, `API_KEY=x`, `"apiToken":"x"` — allows
+  // arbitrary word-char prefixes/suffixes and surrounding quotes so snake_case
+  // (AUTH_TOKEN=), camelCase (apiToken), and JSON-quoted keys are all caught.
+  /["']?[\w.-]*(password|passwd|api[_-]?key|secret|token|credential)[\w-]*["']?\s*[:=]\s*["']?\S+/i,
+];
+
+/**
+ * Detect content that looks like a secret or credential.
+ * Heuristic only; callers should reject storage rather than silently strip.
+ * @param {string} text
+ * @returns {boolean}
+ */
+function looksLikeSecret(text) {
+  if (!text || typeof text !== 'string') return false;
+  return SECRET_PATTERNS.some(pattern => pattern.test(text));
+}
+
+/**
  * Return the thread_ts of an existing thread the message belongs to, or null.
  * Does NOT fall back to the message's own ts — use this when you need to know
  * whether the message is already inside a thread (e.g. context key scoping).
@@ -118,6 +147,7 @@ module.exports = {
   sanitizeText,
   sanitizeSlackBroadcasts,
   detectPromptInjection,
+  looksLikeSecret,
   truncate,
   getAdapterType,
   getExistingSlackThread,

@@ -21,6 +21,10 @@
 //   HUBOT_OLLAMA_AMBIENT_CONTEXT - Passively capture recent room messages as background context for answers (default: false)
 //   HUBOT_OLLAMA_AMBIENT_CONTEXT_SIZE - Number of recent ambient messages to retain per room (default: 10)
 //   HUBOT_OLLAMA_COMMAND_TOOL_ENABLED - Allow the LLM to invoke other Hubot commands on the user's behalf (default: false)
+//   HUBOT_OLLAMA_MEMORY_ENABLED - Allow the LLM to save/recall persistent memories via robot.brain (default: true)
+//   HUBOT_OLLAMA_MEMORY_MAX_ENTRIES - Max memory entries per context scope before least-recently-accessed eviction (default: 200)
+//   HUBOT_OLLAMA_MEMORY_MAX_CONTENT_CHARS - Max characters stored per memory entry (default: 4000)
+//   HUBOT_OLLAMA_MEMORY_MAX_SUMMARY_CHARS - Max characters for a memory's summary (default: 200)
 //
 // Commands:
 //   hubot ask <prompt> - Ask Ollama a question
@@ -37,6 +41,7 @@ const registry = require('./tool-registry');
 const createHubotCommandTool = require('./tools/hubot-command-tool');
 const createHubotHelpTool = require('./tools/hubot-help-tool');
 const createJavaScriptReplTool = require('./tools/javascript-repl-tool');
+const createMemoryTool = require('./tools/memory-tool');
 const createWebFetchTool = require('./tools/web-fetch-tool');
 const createWebSearchTool = require('./tools/web-search-tool');
 const { applyLoggerShims } = require('./utils/hubot-compat');
@@ -69,6 +74,10 @@ module.exports = (robot) => {
   const AMBIENT_CONTEXT = /^(?:1|true|yes)$/i.test(process.env.HUBOT_OLLAMA_AMBIENT_CONTEXT || '');
   const AMBIENT_CONTEXT_SIZE = Math.max(1, Number.parseInt(process.env.HUBOT_OLLAMA_AMBIENT_CONTEXT_SIZE || '10', 10));
   const COMMAND_TOOL_ENABLED = /^(?:1|true|yes)$/i.test(process.env.HUBOT_OLLAMA_COMMAND_TOOL_ENABLED || '');
+  const MEMORY_ENABLED = /^(?:1|true|yes)$/i.test(process.env.HUBOT_OLLAMA_MEMORY_ENABLED || 'true');
+  const MEMORY_MAX_ENTRIES = Math.max(1, Number.parseInt(process.env.HUBOT_OLLAMA_MEMORY_MAX_ENTRIES || '200', 10));
+  const MEMORY_MAX_CONTENT_CHARS = Math.max(1, Number.parseInt(process.env.HUBOT_OLLAMA_MEMORY_MAX_CONTENT_CHARS || '4000', 10));
+  const MEMORY_MAX_SUMMARY_CHARS = Math.max(1, Number.parseInt(process.env.HUBOT_OLLAMA_MEMORY_MAX_SUMMARY_CHARS || '200', 10));
 
   // Emoji used with compatible adapters to indicate processing state
   const REQUEST_THINKING_EMOJI = 'thought_balloon';
@@ -400,6 +409,25 @@ IMPORTANT: Keep the summary under 600 characters.`;
     robot.logger.debug(`Conversation context key=${key} scope=${CONTEXT_SCOPE}`);
     return key;
   };
+
+  // Register memory tool unless explicitly disabled (on by default, opt-out
+  // via HUBOT_OLLAMA_MEMORY_ENABLED=false). Registered here (rather than
+  // alongside the other tools above) because it depends on getContextKey,
+  // which is defined just above.
+  if (TOOLS_ENABLED && MEMORY_ENABLED) {
+    const memoryTool = createMemoryTool(null, {
+      MAX_ENTRIES: MEMORY_MAX_ENTRIES,
+      MAX_CONTENT_CHARS: MEMORY_MAX_CONTENT_CHARS,
+      MAX_SUMMARY_CHARS: MEMORY_MAX_SUMMARY_CHARS,
+      getContextKey
+    }, robot.logger);
+    registry.registerTool(memoryTool.name, {
+      description: memoryTool.description,
+      parameters: memoryTool.parameters,
+      handler: memoryTool.handler
+    });
+    robot.logger.debug('Registered memory tool');
+  }
 
   // Get conversation history for a user, cleaning up expired contexts
   // Returns { history: [], summary: null }
