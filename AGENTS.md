@@ -40,9 +40,11 @@ See orchestration flow in [src/hubot-ollama.js](src/hubot-ollama.js) and baselin
 - Conditionally registered (when web + tools gates are met):
   - `hubot_ollama_web_search`
   - `hubot_ollama_web_fetch`
+- Conditionally registered (when `HUBOT_OLLAMA_TOOLS_ENABLED=true` and `HUBOT_OLLAMA_MEMORY_ENABLED=true`, on by default):
+  - `hubot_ollama_memory` — save/recall/list/delete persistent facts in `robot.brain`, scoped by `getContextKey()` (same scoping as conversation context)
 
 Where these are registered: [src/hubot-ollama.js](src/hubot-ollama.js).
-Where they are implemented: [src/tools/javascript-repl-tool.js](src/tools/javascript-repl-tool.js), [src/tools/web-search-tool.js](src/tools/web-search-tool.js), [src/tools/web-fetch-tool.js](src/tools/web-fetch-tool.js).
+Where they are implemented: [src/tools/javascript-repl-tool.js](src/tools/javascript-repl-tool.js), [src/tools/web-search-tool.js](src/tools/web-search-tool.js), [src/tools/web-fetch-tool.js](src/tools/web-fetch-tool.js), [src/tools/memory-tool.js](src/tools/memory-tool.js).
 
 ### Registration Contract
 Tools are registered through [src/tool-registry.js](src/tool-registry.js) using:

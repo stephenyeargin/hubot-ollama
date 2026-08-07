@@ -56,6 +56,10 @@ Prompts are sanitized and truncated if they exceed the configured limit.
 | `HUBOT_OLLAMA_AMBIENT_CONTEXT` | Optional | `false` | Passively capture recent room messages as background context for answers |
 | `HUBOT_OLLAMA_AMBIENT_CONTEXT_SIZE` | Optional | `10` | Number of recent ambient messages to retain per room |
 | `HUBOT_OLLAMA_COMMAND_TOOL_ENABLED` | Optional | `false` | Allow the LLM to invoke other Hubot commands on the user's behalf and read the response |
+| `HUBOT_OLLAMA_MEMORY_ENABLED` | Optional | `true` | Allow the LLM to save/recall persistent memories via `robot.brain` |
+| `HUBOT_OLLAMA_MEMORY_MAX_ENTRIES` | Optional | `200` | Max memory entries per context scope before least-recently-accessed eviction |
+| `HUBOT_OLLAMA_MEMORY_MAX_CONTENT_CHARS` | Optional | `4000` | Max characters stored per memory entry |
+| `HUBOT_OLLAMA_MEMORY_MAX_SUMMARY_CHARS` | Optional | `200` | Max characters for a memory's summary |
 | `HUBOT_OLLAMA_WEB_ENABLED` | Optional | `false` | Enable web-assisted workflow that can search/fetch context |
 | `HUBOT_OLLAMA_WEB_MAX_RESULTS` | Optional | `5` | Max search results to use (capped at 10) |
 | `HUBOT_OLLAMA_WEB_FETCH_CONCURRENCY` | Optional | `3` | Parallel fetch concurrency |
@@ -207,6 +211,29 @@ gives up and reports no response.
 
 ```bash
 export HUBOT_OLLAMA_COMMAND_TOOL_ENABLED=true
+```
+
+**Persistent Memory (on by default):**
+The bot registers `hubot_ollama_memory`, a caching aid the model can use to avoid re-deriving, re-fetching, or
+re-asking for the same information across conversations — e.g. a fact the user already gave it, or a slow tool
+result worth reusing instead of recomputing. This is meant to make the bot more efficient, not to give users a
+"remember this about me" command; the model decides on its own when caching something is worthwhile. The tool
+supports four actions: `save`, `recall`, `list`, and `delete`. `list` returns only keys and summaries (cheap to
+browse); `recall` returns the full content for a specific key. Memories are scoped using the same context key
+as conversation history (see [Context Scopes](#conversation-context)), so privacy follows whatever
+`HUBOT_OLLAMA_CONTEXT_SCOPE` is already configured — a `room-user` scope keeps memories private per user,
+`room` shares them with everyone in the room. The model is instructed to only save information it's confident
+is accurate (something explicitly stated or an already-verified tool result, never a guess), and saves that
+look like passwords, API keys, tokens, or other credentials are rejected by a best-effort regex guardrail — it
+catches common, recognizably-shaped pastes but is not a security boundary; don't rely on it to catch every
+credential format. Each context scope holds at most `HUBOT_OLLAMA_MEMORY_MAX_ENTRIES` entries; past that, the
+least-recently-accessed entry is evicted to make room for a new one.
+
+```bash
+export HUBOT_OLLAMA_MEMORY_ENABLED=false        # opt out (default: true)
+export HUBOT_OLLAMA_MEMORY_MAX_ENTRIES=200
+export HUBOT_OLLAMA_MEMORY_MAX_CONTENT_CHARS=4000
+export HUBOT_OLLAMA_MEMORY_MAX_SUMMARY_CHARS=200
 ```
 
 **Example Tool Interaction:**
