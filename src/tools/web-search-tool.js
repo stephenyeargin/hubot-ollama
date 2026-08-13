@@ -2,8 +2,6 @@
 // Performs web search and returns ONLY metadata (title, url, snippet)
 // Fetching is handled by a separate hubot_ollama_web_fetch tool
 
-const { getAdapterType, getSlackThreadTs } = require('../utils/ollama-utils');
-
 const ollamaClient = require('./ollama-client');
 
 module.exports = (ollama, config, logger) => ({
@@ -15,7 +13,7 @@ module.exports = (ollama, config, logger) => ({
       description: 'Search query text to find relevant web pages. Do not use URLs here - use hubot_ollama_web_fetch for fetching specific URLs.'
     }
   },
-  handler: async (args, robot, msg) => {
+  handler: async (args) => {
     // Use the query provided by the model
     const searchQuery = args.query || args.prompt || '';
 
@@ -27,20 +25,8 @@ module.exports = (ollama, config, logger) => ({
         return { error: 'No search query provided' };
       }
 
-      // Send status message to user first
-      if (msg && msg.send) {
-        const statusText = '⏳ _Searching web for relevant sources..._';
-
-        if (getAdapterType(robot) === 'slack') {
-          const userId = msg?.message?.user?.id || msg?.message?.user?.name || '';
-          const mention = userId ? `<@${userId}> ` : '';
-          const threadTs = getSlackThreadTs(msg);
-          msg.send({ text: `${mention}${statusText}`, mrkdwn: true, thread_ts: threadTs });
-        } else {
-          msg.reply(statusText);
-        }
-      }
-
+      // No dedicated status message here — the caller's "is running a tool..."
+      // thinking status/reaction already covers this while the tool executes.
       logger?.debug(`Search query: ${searchQuery}`);
 
       // Perform web search with the query provided by the model

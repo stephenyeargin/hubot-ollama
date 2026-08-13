@@ -120,11 +120,15 @@ describe('hubot-ollama web-enabled flow', () => {
     await room.user.say('alice', 'hubot ask summarize latest node release');
     // Allow async chain (decision -> terms -> search -> fetch -> final)
     await new Promise((resolve) => setTimeout(resolve, 250));
-    // Expect status message
-    expect(room.messages.some(m => /Searching (web for )?relevant sources/.test(m[1]))).toBe(true);
+    // No interim "searching"/"fetching" status message — the thinking indicator covers it
+    expect(room.messages.some(m => /Searching (web for )?relevant sources/.test(m[1]))).toBe(false);
+    expect(room.messages.some(m => /Fetching content from/.test(m[1]))).toBe(false);
     // Final answer should indicate web context was included
-    const last = room.messages[room.messages.length - 1][1];
+    const last = room.messages[room.messages.length - 2][1];
     expect(last).toMatch(/Answer with web context/);
+    // Aggregated source summary posted after the final answer
+    const sourcesMsg = room.messages[room.messages.length - 1][1];
+    expect(sourcesMsg).toMatch(/🌐 Sources: nodejs\.org/);
   });
 
   it('falls back when web disabled', async () => {
@@ -143,7 +147,7 @@ describe('hubot-ollama web-enabled flow', () => {
     expect(last).toMatch(/Answer without web/);
   });
 
-  it('keeps web-search status messaging when Slack reactions are not permitted', async () => {
+  it('still completes the web flow and posts sources when Slack reactions and status are not permitted', async () => {
     room.destroy();
     room = await slackHelper.createRoom();
     ['debug', 'info', 'warning', 'error'].forEach((method) => {
@@ -165,18 +169,13 @@ describe('hubot-ollama web-enabled flow', () => {
     }));
     await new Promise((resolve) => setTimeout(resolve, 250));
 
-    const hasSearchStatus = room.messages.some((m) => {
-      const payload = m[1];
-      return m[0] === 'hubot' &&
-        typeof payload === 'object' &&
-        typeof payload.text === 'string' &&
-        /Searching web for relevant sources/.test(payload.text);
-    });
-
-    const last = room.messages[room.messages.length - 1][1];
+    const last = room.messages[room.messages.length - 2][1];
     const lastText = typeof last === 'string' ? last : last.text;
-    expect(hasSearchStatus).toBe(true);
     expect(lastText).toMatch(/Answer with web context/);
+
+    const sourcesMsg = room.messages[room.messages.length - 1][1];
+    const sourcesText = typeof sourcesMsg === 'string' ? sourcesMsg : sourcesMsg.text;
+    expect(sourcesText).toMatch(/🌐 _Sources: <https:\/\/nodejs\.org.*\|nodejs\.org>_/);
   });
 
   it('adds and removes tool reaction during Slack web tool execution', async () => {

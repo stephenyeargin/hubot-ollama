@@ -215,6 +215,53 @@ describe('web-fetch-tool', () => {
     expect(mockRobot.brain.set).toHaveBeenCalledWith('ollamaFetchedUrls', expect.any(Object));
   });
 
+  test('accumulates URLs across multiple fetch calls within the same invocation', async () => {
+    // This is the mechanism hubot-ollama.js relies on to aggregate all fetched
+    // URLs from an invocation into a single post-response source summary.
+    const mockOllama = {};
+    const config = {
+      WEB_MAX_RESULTS: 5,
+      WEB_MAX_BYTES: 120000,
+      WEB_FETCH_CONCURRENCY: 3,
+      WEB_TIMEOUT_MS: 45000
+    };
+    const logger = { debug: vi.fn(), error: vi.fn(), warn: vi.fn() };
+
+    const invocationContextKey = 'test-invocation-aggregate';
+    const fetchedUrls = {};
+    const mockRobot = {
+      brain: {
+        get: vi.fn((key) => key === 'ollamaFetchedUrls' ? fetchedUrls : ({})),
+        set: vi.fn()
+      }
+    };
+
+    const tool = webFetchTool(mockOllama, config, logger);
+
+    ollamaClient.runWebFetchMany.mockResolvedValueOnce([
+      { url: 'https://example.com/1', text: 'Content 1' }
+    ]);
+    await tool.handler(
+      { urls: ['https://example.com/1'], _invocationContextKey: invocationContextKey },
+      mockRobot,
+      { message: { room: 'room', user: { id: 'user' } } }
+    );
+
+    ollamaClient.runWebFetchMany.mockResolvedValueOnce([
+      { url: 'https://example.com/2', text: 'Content 2' }
+    ]);
+    await tool.handler(
+      { urls: ['https://example.com/2'], _invocationContextKey: invocationContextKey },
+      mockRobot,
+      { message: { room: 'room', user: { id: 'user' } } }
+    );
+
+    expect(fetchedUrls[invocationContextKey]).toEqual([
+      'https://example.com/1',
+      'https://example.com/2'
+    ]);
+  });
+
   test('handler validates URLs', async () => {
     const mockOllama = {};
     const config = {
@@ -244,98 +291,5 @@ describe('web-fetch-tool', () => {
 
     expect(result).toHaveProperty('error');
     expect(result.error).toContain('Failed to fetch URLs');
-  });
-
-  test('sends Slack-formatted status with domain links and no unfurl', async () => {
-    const mockOllama = {};
-    const config = {
-      WEB_MAX_RESULTS: 5,
-      WEB_MAX_BYTES: 120000,
-      WEB_FETCH_CONCURRENCY: 3,
-      WEB_TIMEOUT_MS: 45000
-    };
-    const logger = { debug: vi.fn(), error: vi.fn(), warn: vi.fn() };
-
-    const mockRobot = {
-      adapterName: 'slack',
-      brain: {
-        get: vi.fn(() => ({})),
-        set: vi.fn()
-      }
-    };
-
-    // Mock successful fetch to allow handler to proceed
-    ollamaClient.runWebFetchMany.mockResolvedValue([
-      { url: 'https://example.com/page', text: 'Content A' },
-      { url: 'http://another.test/path', text: 'Content B' }
-    ]);
-
-    const tool = webFetchTool(mockOllama, config, logger);
-    const msg = {
-      message: { user: { id: 'U123' }, rawMessage: { ts: '123.456' } },
-      send: vi.fn(),
-    };
-
-    await tool.handler(
-      { urls: ['https://example.com/page', 'http://another.test/path'] },
-      mockRobot,
-      msg
-    );
-
-    // Verify Slack message formatting
-    expect(msg.send).toHaveBeenCalledTimes(1);
-    const payload = msg.send.mock.calls[0][0];
-    expect(payload).toMatchObject({ mrkdwn: true, unfurl_links: false, unfurl_media: false });
-    expect(typeof payload.text).toBe('string');
-    expect(payload.text).toContain('<@U123>');
-    expect(payload.text).toContain('⏳ _Fetching content from 2 URL(s):');
-    expect(payload.text).toContain('<https://example.com/page|example.com>');
-    expect(payload.text).toContain('<http://another.test/path|another.test>');
-    expect(payload.thread_ts).toBe('123.456');
-  });
-
-  test('sends plain status text for non-Slack adapters', async () => {
-    const mockOllama = {};
-    const config = {
-      WEB_MAX_RESULTS: 5,
-      WEB_MAX_BYTES: 120000,
-      WEB_FETCH_CONCURRENCY: 3,
-      WEB_TIMEOUT_MS: 45000
-    };
-    const logger = { debug: vi.fn(), error: vi.fn(), warn: vi.fn() };
-
-    const mockRobot = {
-      adapterName: 'shell',
-      brain: {
-        get: vi.fn(() => ({})),
-        set: vi.fn()
-      }
-    };
-
-    ollamaClient.runWebFetchMany.mockResolvedValue([
-      { url: 'https://example.com/page', text: 'Content A' },
-    ]);
-
-    const tool = webFetchTool(mockOllama, config, logger);
-    const msg = {
-      // Provide send to satisfy status guard, reply used for non-Slack
-      send: vi.fn(),
-      reply: vi.fn(),
-    };
-
-    await tool.handler(
-      { urls: ['https://example.com/page', 'http://another.test/path'] },
-      mockRobot,
-      msg
-    );
-
-    // Verify plain text message without Slack link syntax
-    expect(msg.reply).toHaveBeenCalledTimes(1);
-    const text = msg.reply.mock.calls[0][0];
-    expect(text).toContain('⏳ _Fetching content from 2 URL(s):');
-    expect(text).toContain('example.com');
-    expect(text).toContain('another.test');
-    expect(text).not.toContain('<https://');
-    expect(text).not.toContain('|');
   });
 });
