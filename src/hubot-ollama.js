@@ -618,6 +618,28 @@ IMPORTANT: Keep the summary under 600 characters.`;
     }
   };
 
+  // Slack's native "AppName is thinking..." status strip. Preferred over the emoji
+  // reaction when available; callers fall back to addThinkingReaction on `false`.
+  const setThinkingStatus = async (msg, status) => {
+    const adapterType = getAdapterType(robot);
+    try {
+      if (adapterType === 'slack') {
+        const target = getReactionTarget(msg, adapterType);
+        const setStatusFn = robot?.adapter?.client?.web?.assistant?.threads?.setStatus;
+        if (!target || typeof setStatusFn !== 'function') return false;
+        await setStatusFn({ channel_id: target.channel, thread_ts: target.timestamp, status });
+        return true;
+      }
+      return false;
+    } catch (e) {
+      // Nice-to-have enhancement (missing scope, feature not enabled, etc.) — never break the request
+      robot.logger.debug(`Set thinking status failed (${adapterType}): ${e && e.message}`);
+      return false;
+    }
+  };
+
+  const clearThinkingStatus = async (msg) => setThinkingStatus(msg, '');
+
   // Model tool support cache to avoid repeated probes
   let modelSupportsCached = null;
 
@@ -856,8 +878,12 @@ IMPORTANT: Keep the summary under 600 characters.`;
         if (toolCallLimits.hasOwnProperty(toolName)) toolCallCounts[toolName]++;
         if (!toolsUsed.includes(toolName)) toolsUsed.push(toolName);
         let toolReactionAdded = false;
+        let toolStatusSet = false;
         try {
-          toolReactionAdded = await addThinkingReaction(msg, TOOL_INVOKED_EMOJI);
+          toolStatusSet = await setThinkingStatus(msg, 'is running a tool...');
+          if (!toolStatusSet) {
+            toolReactionAdded = await addThinkingReaction(msg, TOOL_INVOKED_EMOJI);
+          }
           const toolResults = await selectedTool.handler(
             { ...toolArgs, _invocationContextKey: invocationContextKey },
             robot, msg
@@ -865,8 +891,12 @@ IMPORTANT: Keep the summary under 600 characters.`;
           robot.logger.debug(`Tool result: ${JSON.stringify(toolResults)}`);
           return { toolName, toolResults, wasNameless, unrecoverable: false };
         } finally {
-          // Remove reaction asynchronously to avoid blocking critical path
-          if (toolReactionAdded) {
+          // Restore/remove indicator asynchronously to avoid blocking critical path
+          if (toolStatusSet) {
+            setThinkingStatus(msg, 'is thinking...').catch((err) => {
+              robot.logger.debug(`Tool status restore failed: ${err.message}`);
+            });
+          } else if (toolReactionAdded) {
             removeThinkingReaction(msg, TOOL_INVOKED_EMOJI).catch((err) => {
               robot.logger.debug(`Tool reaction removal failed: ${err.message}`);
             });
@@ -1340,9 +1370,13 @@ IMPORTANT: Keep the summary under 600 characters.`;
     // Get conversation history and summary for this user/room
     const { history: conversationHistory, summary: conversationSummary } = getConversationHistory(msg);
     let reactionAdded = false;
+    let statusSet = false;
     try {
-      // Try to add a thinking reaction while processing (adapter-aware)
-      reactionAdded = await addThinkingReaction(msg, REQUEST_THINKING_EMOJI);
+      // Prefer Slack's native "is thinking..." status; fall back to an emoji reaction
+      statusSet = await setThinkingStatus(msg, 'is thinking...');
+      if (!statusSet) {
+        reactionAdded = await addThinkingReaction(msg, REQUEST_THINKING_EMOJI);
+      }
 
       const response = await askOllama(sanitizedPrompt, msg, conversationHistory, conversationSummary);
 
@@ -1362,8 +1396,12 @@ IMPORTANT: Keep the summary under 600 characters.`;
     } catch (err) {
       msg.send(formatResponse(`Error: ${err.message || 'An unexpected error occurred while communicating with Ollama.'}`, msg));
     } finally {
-      // Best-effort removal of the reaction once we're done
-      if (reactionAdded) await removeThinkingReaction(msg, REQUEST_THINKING_EMOJI);
+      // Best-effort removal of whichever indicator was actually set
+      if (statusSet) {
+        await clearThinkingStatus(msg);
+      } else if (reactionAdded) {
+        await removeThinkingReaction(msg, REQUEST_THINKING_EMOJI);
+      }
     }
   };
 
