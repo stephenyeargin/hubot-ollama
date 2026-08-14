@@ -25,7 +25,7 @@ Primary anchors: [src/hubot-ollama.js](src/hubot-ollama.js), [src/tool-registry.
 ### Data Flow (high level)
 1. Hubot receives a message (e.g., in Slack).
 2. Command routed through [src/hubot-ollama.js](src/hubot-ollama.js) to resolve intent.
-3. Script probes model tool capability via `ollama.show` (cached per process) and decides single-call or tool-enabled workflow.
+3. Script probes model tool capability via `ollama.show` and decides single-call or tool-enabled workflow. A successful probe is cached for the process lifetime (a model's capabilities don't change at runtime); a *failed* probe is only cached for a short cooldown (~5 min) before retrying, so a transient network error doesn't permanently disable tools.
 4. If tool-enabled, first model call may request tools; tool results are appended and the model is called again (possibly iteratively) for final response.
 5. Model responses are normalized and formatted for the adapter (Slack-aware formatting and thread behavior).
 6. Errors are captured and converted into user-friendly messages.
@@ -35,8 +35,11 @@ See orchestration flow in [src/hubot-ollama.js](src/hubot-ollama.js) and baselin
 ## Tool Surface (current)
 - Built-in (always registered):
   - `hubot_ollama_get_current_time`
-- Conditionally registered (when `HUBOT_OLLAMA_TOOLS_ENABLED=true`):
-  - `hubot_ollama_run_javascript`
+  - `hubot_ollama_help`
+- Conditionally registered, opt-in and **off by default** (when `HUBOT_OLLAMA_TOOLS_ENABLED=true` and `HUBOT_OLLAMA_JS_REPL_ENABLED=true`):
+  - `hubot_ollama_run_javascript` — sandboxed JS execution, runs in a `worker_thread` (see below), not the main process
+- Conditionally registered, opt-in and **off by default** (when `HUBOT_OLLAMA_TOOLS_ENABLED=true` and `HUBOT_OLLAMA_COMMAND_TOOL_ENABLED=true`):
+  - `hubot_ollama_run_command` — lets the model invoke another registered Hubot listener on the user's behalf; highest blast-radius tool in the codebase, see gotchas below
 - Conditionally registered (when web + tools gates are met):
   - `hubot_ollama_web_search`
   - `hubot_ollama_web_fetch`
@@ -44,7 +47,9 @@ See orchestration flow in [src/hubot-ollama.js](src/hubot-ollama.js) and baselin
   - `hubot_ollama_memory` — save/recall/list/delete persistent facts in `robot.brain`, scoped by `getContextKey()` (same scoping as conversation context)
 
 Where these are registered: [src/hubot-ollama.js](src/hubot-ollama.js).
-Where they are implemented: [src/tools/javascript-repl-tool.js](src/tools/javascript-repl-tool.js), [src/tools/web-search-tool.js](src/tools/web-search-tool.js), [src/tools/web-fetch-tool.js](src/tools/web-fetch-tool.js), [src/tools/memory-tool.js](src/tools/memory-tool.js).
+Where they are implemented: [src/tools/javascript-repl-tool.js](src/tools/javascript-repl-tool.js) (+ [src/tools/javascript-repl-worker.js](src/tools/javascript-repl-worker.js)), [src/tools/hubot-command-tool.js](src/tools/hubot-command-tool.js), [src/tools/web-search-tool.js](src/tools/web-search-tool.js), [src/tools/web-fetch-tool.js](src/tools/web-fetch-tool.js), [src/tools/memory-tool.js](src/tools/memory-tool.js).
+
+**Tool results are sent to the model with `role: 'tool'`** (plus `tool_name`), not `role: 'user'` — this lets the model's own role-based trust hierarchy separate real user turns from external/tool-sourced content (e.g. fetched web pages), on top of the `<tool_result>` text framing. Any new tool-result push should follow this convention; don't revert to `role: 'user'`.
 
 ### Registration Contract
 Tools are registered through [src/tool-registry.js](src/tool-registry.js) using:
@@ -80,9 +85,9 @@ contexts[contextKey] = {
 1. Check concurrency lock (`summarizationInProgress[contextKey]`)
 2. Extract turns: `turnsToSummarize = history.slice(0, -KEEP_RAW_TURNS)`
 3. Build prompt (first-time or rolling update) with 600-char limit instruction
-4. Call Ollama with no tools, no streaming, with timeout
+4. Call Ollama with no tools, no streaming, with timeout (via `raceAbort`, see gotchas below)
 5. Apply safety cap if model exceeds 650 chars (truncate to 600)
-6. Replace old turns with summary, keep recent turns
+6. **Re-read `ollamaContexts` from `robot.brain` immediately before the final write** and merge only this context key's fields in — the map read at step 1 is stale after the `await` in step 4, so writing that whole snapshot back would silently clobber any other room/user's writes made during the LLM call.
 7. Release lock
 
 **Prompt assembly:**
@@ -162,9 +167,12 @@ Implementation anchors:
 ## Configuration & Environment
 - Models: Controlled via Ollama (e.g., `llama3`, `qwen`, etc.).
 - Parameters: temperature, max tokens, and other inference settings exposed through `ollama-client`.
-- Env vars:
+- Env vars (full reference kept in [README.md](README.md); `HUBOT_OLLAMA_API_KEY` is preferred, `OLLAMA_API_KEY` is accepted as a fallback):
   - `HUBOT_OLLAMA_HOST`, `HUBOT_OLLAMA_MODEL`, `HUBOT_OLLAMA_API_KEY`
-  - `HUBOT_OLLAMA_TOOLS_ENABLED`
+  - `HUBOT_OLLAMA_TOOLS_ENABLED` — gates the tool-calling workflow as a whole; individual tools below have their own additional gates
+  - `HUBOT_OLLAMA_JS_REPL_ENABLED` — opt-in, default off
+  - `HUBOT_OLLAMA_COMMAND_TOOL_ENABLED` — opt-in, default off
+  - `HUBOT_OLLAMA_MEMORY_ENABLED` — default on
   - Context controls: `HUBOT_OLLAMA_CONTEXT_TTL_MS`, `HUBOT_OLLAMA_CONTEXT_TURNS`, `HUBOT_OLLAMA_CONTEXT_SCOPE`
   - Web controls: `HUBOT_OLLAMA_WEB_ENABLED`, `HUBOT_OLLAMA_WEB_MAX_RESULTS`, `HUBOT_OLLAMA_WEB_FETCH_CONCURRENCY`, `HUBOT_OLLAMA_WEB_MAX_BYTES`, `HUBOT_OLLAMA_WEB_TIMEOUT_MS`
 
@@ -253,6 +261,20 @@ Contract tests:
   - Structured logs and traces for tool execution and model calls.
 - Policy & safeguards:
   - Centralize content safety checks and source attribution.
+
+## Known Gotchas & Non-Obvious Constraints
+(surfaced by a security/reliability review — see PR that introduced this section)
+
+- **The `ollama` npm SDK silently ignores `signal` on non-streaming calls.** `ollama.chat({..., signal})`, `ollama.show({..., signal})`, and `ollama.webFetch({..., signal})` do NOT forward `signal` to the underlying `fetch()` for non-streaming requests — it just gets merged into the JSON request body as a useless/serialized field. Passing `signal` this way looks correct and passes lint/tests unless you specifically test that a slow request actually gets cancelled. The SDK only wires up real cancellation for its own internal streamed-request path (`stream: true`), via `ongoingStreamedRequests` + its own `abort()` method — not usable for our non-streaming calls. **To make a timeout actually cancel a request, use `raceAbort(promise, signal)` from [src/utils/ollama-utils.js](src/utils/ollama-utils.js)**, which races the promise against the abort signal instead of relying on the SDK. Every `ollama.chat()`/`ollama.show()`/`webFetch()` call site in the codebase should go through this. If you add a new one, don't pass `signal` directly in the request object — it will silently do nothing.
+- **Two different concurrency-lock patterns are used on purpose — pick the right one:**
+  - *Skip-if-locked* (`summarizationInProgress[key]` in [src/hubot-ollama.js](src/hubot-ollama.js)): use when a duplicate concurrent call is safe to simply drop (e.g. two triggers for the same summarization — the in-flight one will finish anyway).
+  - *Queue-and-wait* (`withBrainLock` in [src/tools/web-fetch-tool.js](src/tools/web-fetch-tool.js), the adapter lock in [src/tools/hubot-command-tool.js](src/tools/hubot-command-tool.js)): use when every call must still complete and none can be silently dropped (e.g. concurrent brain read-modify-writes, or monkey-patching a shared `adapter.send`). Reuse these existing helpers/patterns rather than inventing a third style.
+- **`hubot_ollama_run_command`'s `confirmed: true` is only a model self-attestation** — it cannot be trusted once the interaction has ingested external content (a web search/fetch result), since injected content could have produced that "confirmation" rather than the actual human. The handler refuses mutating commands when `args._untrustedContentIngested` is true; this flag is threaded through from `hubot-ollama.js`'s `resolveAndExecuteToolCall`, set once any `hubot_ollama_web_search`/`hubot_ollama_web_fetch` call completes in the interaction. Any new privileged tool should honor this same flag rather than trusting `confirmed`/similar model-supplied claims in isolation.
+- **`vm`'s `timeout` option only bounds a script's initial synchronous execution**, not anything the script schedules for later (a `Promise.then()` callback, in particular) — code can return synchronously well within the timeout and then hang the event loop forever in a microtask. This is why the JS REPL tool ([src/tools/javascript-repl-tool.js](src/tools/javascript-repl-tool.js)) runs the `vm` sandbox inside a `worker_thread` ([src/tools/javascript-repl-worker.js](src/tools/javascript-repl-worker.js)) with an external hard timeout that force-terminates the whole worker — that's the only way to guarantee runaway code doesn't hang the main bot process.
+- **Integer env vars must go through `parseIntEnv()`** (defined near the top of [src/hubot-ollama.js](src/hubot-ollama.js)), not raw `Number.parseInt`. A `Math.max(1, Number.parseInt('garbage', 10))` guard is NOT safe — `Number.parseInt` returns `NaN` for non-numeric input, and `Math.max`/`Math.min` with a `NaN` operand return `NaN`, not the clamped bound, silently disabling the limit/timeout it was meant to enforce.
+- **Testing gotcha: `nock` mocks for `POST /api/show` must match `{ model: '<name>' }`, not `{ name: '<name>' }`.** The real code calls `ollama.show({ model: modelName })`. A body-key mismatch doesn't fail loudly — nock just never matches, the probe throws, gets caught, and silently falls back to "model doesn't support tools." This previously masked whether several "model supports tools" tests were exercising the two-call tool workflow at all; they were quietly running the untested single-call fallback instead. If a test that gates on tool-capability starts behaving oddly, check the `/api/show` mock's body first.
+- **Tools registered via `HUBOT_OLLAMA_*_ENABLED` env vars are read at module-load time.** A test that sets the env var mid-test without recreating the room (`room.destroy(); room = await helper.createRoom();`) is silently testing against whatever value was set in an earlier `beforeEach` — this bug existed in the `TOOLS_ENABLED=false` test until this review. Always destroy/recreate the room after changing an env var a test wants to exercise.
+- **`src/tool-registry.js` is a module-level singleton**, shared by every `robot` instance loaded in the same process. Fine for production (one bot process, one config), but tests that assert a tool is absent/present must call `registry.clearTools()` between rooms or state leaks across tests.
 
 ## Operational Notes
 - Keep responses fast and predictable; prefer bounded pipelines.
