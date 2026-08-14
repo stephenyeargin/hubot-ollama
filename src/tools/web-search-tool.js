@@ -25,8 +25,6 @@ module.exports = (ollama, config, logger) => ({
         return { error: 'No search query provided' };
       }
 
-      // No dedicated status message here — the caller's "is running a tool..."
-      // thinking status/reaction already covers this while the tool executes.
       logger?.debug(`Search query: ${searchQuery}`);
 
       // Perform web search with the query provided by the model
