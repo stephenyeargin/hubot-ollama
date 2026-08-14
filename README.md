@@ -146,17 +146,23 @@ When `HUBOT_OLLAMA_WEB_ENABLED=true` and the connected Ollama host supports web 
 - Phase 1: The model chooses whether to call `hubot_ollama_web_search`.
 - Phase 2: The tool performs `webSearch`, fetches top results in parallel, builds a compact context block, and returns it.
 - Phase 3: The model incorporates the returned context into its final reply.
-- The bot sends a status message when the search is running and skips duplicate web searches in the same interaction.
+- Search/fetch progress has no dedicated status message of its own — it's covered by the thinking indicator described below. Duplicate web searches/fetches within the same interaction are skipped.
+- If any URLs were fetched via `hubot_ollama_web_fetch` during the interaction, a single aggregated `🌐 Sources: ...` message is posted after the final answer (not while work is in progress), listing every URL fetched across the whole interaction — including across multiple searches/fetches — in one message.
 
 ### Slack Reactions And Status
 When running with the Slack adapter, hubot-ollama uses reactions/status indicators on the triggering message:
 
-- `💭` (`thought_balloon`) while the main prompt is being processed.
-- `🛠️` (`hammer_and_wrench`) while a tool call is actively executing.
-- `⏳` status text is posted during web search (`_Searching web for relevant sources..._`).
+- Slack's native "_App_ is thinking..." / "_App_ is running a tool..." status strip (via `assistant.threads.setStatus`) while the prompt is processed and while a tool call is actively executing, if the bot's Slack app supports it.
+- Otherwise, falls back to emoji reactions on the triggering message: `💭` (`thought_balloon`) while the main prompt is being processed, `🛠️` (`hammer_and_wrench`) while a tool call is actively executing.
 
-Reactions require Slack reaction scopes (for example, `reactions:write`).
-If reaction permissions are missing, the bot continues normally and keeps the existing web-search status message behavior.
+These are nice-to-have enhancements and require additional Slack app permissions beyond the base `chat:write` scope needed to post messages:
+
+| Indicator | Requirement |
+|---|---|
+| Thinking status strip | "Agents & AI Apps" enabled in the Slack app config, plus `chat:write` (or the older `assistant:write`) scope |
+| Emoji reactions | `reactions:write` scope |
+
+If neither is available, the bot continues normally with no processing indicator at all.
 
 Enable:
 ```bash

@@ -192,6 +192,159 @@ describe('hubot-ollama slack', () => {
 
   });
 
+  describe('Slack Thinking Status Lifecycle', () => {
+    it('sets and clears thinking status instead of adding a reaction, when supported', async () => {
+      process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'false';
+      room.destroy();
+      room = await helper.createRoom();
+      ['debug', 'info', 'warning', 'error'].forEach((method) => {
+        room.robot.logger[method] = vi.fn();
+      });
+
+      const addReaction = vi.fn().mockResolvedValue({ ok: true });
+      const removeReaction = vi.fn().mockResolvedValue({ ok: true });
+      const setStatus = vi.fn().mockResolvedValue({ ok: true });
+      room.robot.adapter.client = {
+        web: {
+          reactions: {
+            add: addReaction,
+            remove: removeReaction
+          },
+          assistant: {
+            threads: {
+              setStatus
+            }
+          }
+        }
+      };
+
+      nock(OLLAMA_HOST)
+        .post('/api/show', { name: 'llama3.2' })
+        .reply(200, { capabilities: [] });
+
+      mockOllamaChat('Hello from Slack.');
+
+      await room.user.say('alice', createMockTextMessage('hubot ask hello', {
+        room: 'room1',
+        rawMessage: { ts: '1716400000.000100' }
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(setStatus).toHaveBeenCalledWith({
+        channel_id: 'room1',
+        thread_ts: '1716400000.000100',
+        status: 'is thinking...'
+      });
+      expect(setStatus).toHaveBeenCalledWith({
+        channel_id: 'room1',
+        thread_ts: '1716400000.000100',
+        status: ''
+      });
+      expect(addReaction).not.toHaveBeenCalled();
+      expect(removeReaction).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the emoji reaction when setStatus is not supported by the adapter', async () => {
+      process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'false';
+      room.destroy();
+      room = await helper.createRoom();
+      ['debug', 'info', 'warning', 'error'].forEach((method) => {
+        room.robot.logger[method] = vi.fn();
+      });
+
+      const addReaction = vi.fn().mockResolvedValue({ ok: true });
+      const removeReaction = vi.fn().mockResolvedValue({ ok: true });
+      room.robot.adapter.client = {
+        web: {
+          reactions: {
+            add: addReaction,
+            remove: removeReaction
+          }
+        }
+      };
+
+      nock(OLLAMA_HOST)
+        .post('/api/show', { name: 'llama3.2' })
+        .reply(200, { capabilities: [] });
+
+      mockOllamaChat('Hello from Slack.');
+
+      await room.user.say('alice', createMockTextMessage('hubot ask hello', {
+        room: 'room1',
+        rawMessage: { ts: '1716400000.000100' }
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(addReaction).toHaveBeenCalledWith({
+        name: 'thought_balloon',
+        channel: 'room1',
+        timestamp: '1716400000.000100'
+      });
+      expect(removeReaction).toHaveBeenCalledWith({
+        name: 'thought_balloon',
+        channel: 'room1',
+        timestamp: '1716400000.000100'
+      });
+    });
+
+    it('falls back to the emoji reaction when setStatus rejects (e.g. missing scope)', async () => {
+      process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'false';
+      room.destroy();
+      room = await helper.createRoom();
+      ['debug', 'info', 'warning', 'error'].forEach((method) => {
+        room.robot.logger[method] = vi.fn();
+      });
+
+      const addReaction = vi.fn().mockResolvedValue({ ok: true });
+      const removeReaction = vi.fn().mockResolvedValue({ ok: true });
+      const setStatus = vi.fn().mockRejectedValue(new Error('missing_scope'));
+      room.robot.adapter.client = {
+        web: {
+          reactions: {
+            add: addReaction,
+            remove: removeReaction
+          },
+          assistant: {
+            threads: {
+              setStatus
+            }
+          }
+        }
+      };
+
+      nock(OLLAMA_HOST)
+        .post('/api/show', { name: 'llama3.2' })
+        .reply(200, { capabilities: [] });
+
+      mockOllamaChat('Hello from Slack.');
+
+      await room.user.say('alice', createMockTextMessage('hubot ask hello', {
+        room: 'room1',
+        rawMessage: { ts: '1716400000.000100' }
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(setStatus).toHaveBeenCalled();
+      expect(addReaction).toHaveBeenCalledWith({
+        name: 'thought_balloon',
+        channel: 'room1',
+        timestamp: '1716400000.000100'
+      });
+      expect(removeReaction).toHaveBeenCalledWith({
+        name: 'thought_balloon',
+        channel: 'room1',
+        timestamp: '1716400000.000100'
+      });
+      expect(room.messages).toEqual([
+        ['alice', 'hubot ask hello'],
+        ['hubot', {
+          text: 'Hello from Slack.',
+          mrkdwn: true,
+        }],
+      ]);
+    });
+  });
+
   describe('Thread scope (HUBOT_OLLAMA_CONTEXT_SCOPE=thread)', () => {
     beforeEach(async () => {
       room.destroy();

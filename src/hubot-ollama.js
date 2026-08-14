@@ -550,6 +550,39 @@ IMPORTANT: Keep the summary under 600 characters.`;
     return response;
   };
 
+  /**
+   * Post a single aggregated summary of URLs fetched via hubot_ollama_web_fetch during this
+   * invocation. Sent after the final answer (rather than as they're fetched) so the thinking
+   * indicator, not a stream of interim "fetching..." messages, is what's visible in the main chat.
+   * @param {object} msg - Hubot response object
+   * @param {string[]} urls - Deduped URLs fetched during the invocation
+   */
+  const sendFetchedSources = (msg, urls) => {
+    if (!msg || !msg.send || !urls || !urls.length) return;
+
+    if (getAdapterType(robot) === 'slack') {
+      const links = urls.map(url => {
+        try {
+          const domain = new URL(url).hostname;
+          return `<${url}|${domain}>`;
+        } catch {
+          return url;
+        }
+      }).join(', ');
+      const threadTs = getSlackThreadTs(msg);
+      msg.send({ text: `🌐 _Sources: ${links}_`, mrkdwn: true, unfurl_links: false, unfurl_media: false, thread_ts: threadTs });
+    } else {
+      const domains = urls.map(url => {
+        try {
+          return new URL(url).hostname;
+        } catch {
+          return url;
+        }
+      }).join(', ');
+      msg.send(`🌐 Sources: ${domains}`);
+    }
+  };
+
   // Reaction helpers (adapter-aware; no-ops when unsupported)
   const getReactionTarget = (msg, adapterType) => {
     try {
@@ -617,6 +650,28 @@ IMPORTANT: Keep the summary under 600 characters.`;
       return false;
     }
   };
+
+  // Slack's native "AppName is thinking..." status strip. Preferred over the emoji
+  // reaction when available; callers fall back to addThinkingReaction on `false`.
+  const setThinkingStatus = async (msg, status) => {
+    const adapterType = getAdapterType(robot);
+    try {
+      if (adapterType === 'slack') {
+        const target = getReactionTarget(msg, adapterType);
+        const setStatusFn = robot?.adapter?.client?.web?.assistant?.threads?.setStatus;
+        if (!target || typeof setStatusFn !== 'function') return false;
+        await setStatusFn({ channel_id: target.channel, thread_ts: target.timestamp, status });
+        return true;
+      }
+      return false;
+    } catch (e) {
+      // Nice-to-have enhancement (missing scope, feature not enabled, etc.) — never break the request
+      robot.logger.debug(`Set thinking status failed (${adapterType}): ${e && e.message}`);
+      return false;
+    }
+  };
+
+  const clearThinkingStatus = async (msg) => setThinkingStatus(msg, '');
 
   // Model tool support cache to avoid repeated probes
   let modelSupportsCached = null;
@@ -773,11 +828,14 @@ IMPORTANT: Keep the summary under 600 characters.`;
     const abortController = new AbortController();
     const timeout = setTimeout(() => abortController.abort(), TIMEOUT_MS);
 
-    // Function to clean up invocation context after interaction
+    // Function to clean up invocation context after interaction.
+    // Returns the URLs fetched during this invocation (for a post-response source summary).
     const cleanupInvocation = () => {
+      let sources = [];
       try {
         if (invocationContextKey && robot.brain.get('ollamaFetchedUrls')) {
           const fetchedUrls = robot.brain.get('ollamaFetchedUrls');
+          sources = Array.isArray(fetchedUrls[invocationContextKey]) ? fetchedUrls[invocationContextKey].slice() : [];
           delete fetchedUrls[invocationContextKey];
           robot.brain.set('ollamaFetchedUrls', fetchedUrls);
           robot.logger.debug(`Cleaned up invocation context: ${invocationContextKey}`);
@@ -785,6 +843,7 @@ IMPORTANT: Keep the summary under 600 characters.`;
       } catch (cleanupErr) {
         robot.logger.error(`Error during invocation cleanup: ${cleanupErr.message}`);
       }
+      return sources;
     };
 
     /**
@@ -856,8 +915,12 @@ IMPORTANT: Keep the summary under 600 characters.`;
         if (toolCallLimits.hasOwnProperty(toolName)) toolCallCounts[toolName]++;
         if (!toolsUsed.includes(toolName)) toolsUsed.push(toolName);
         let toolReactionAdded = false;
+        let toolStatusSet = false;
         try {
-          toolReactionAdded = await addThinkingReaction(msg, TOOL_INVOKED_EMOJI);
+          toolStatusSet = await setThinkingStatus(msg, 'is running a tool...');
+          if (!toolStatusSet) {
+            toolReactionAdded = await addThinkingReaction(msg, TOOL_INVOKED_EMOJI);
+          }
           const toolResults = await selectedTool.handler(
             { ...toolArgs, _invocationContextKey: invocationContextKey },
             robot, msg
@@ -865,8 +928,12 @@ IMPORTANT: Keep the summary under 600 characters.`;
           robot.logger.debug(`Tool result: ${JSON.stringify(toolResults)}`);
           return { toolName, toolResults, wasNameless, unrecoverable: false };
         } finally {
-          // Remove reaction asynchronously to avoid blocking critical path
-          if (toolReactionAdded) {
+          // Restore/remove indicator asynchronously to avoid blocking critical path
+          if (toolStatusSet) {
+            setThinkingStatus(msg, 'is thinking...').catch((err) => {
+              robot.logger.debug(`Tool status restore failed: ${err.message}`);
+            });
+          } else if (toolReactionAdded) {
             removeThinkingReaction(msg, TOOL_INVOKED_EMOJI).catch((err) => {
               robot.logger.debug(`Tool reaction removal failed: ${err.message}`);
             });
@@ -941,7 +1008,9 @@ IMPORTANT: Keep the summary under 600 characters.`;
           wasNameless = resolved.wasNameless;
 
           if (resolved.unrecoverable) {
-            return await makeFallbackResponse(resolved.unrecoverableReason);
+            const content = await makeFallbackResponse(resolved.unrecoverableReason);
+            const sources = cleanupInvocation();
+            return { content, sources };
           }
 
           toolResults = resolved.toolResults;
@@ -1002,8 +1071,10 @@ IMPORTANT: Keep the summary under 600 characters.`;
 
           if (toolDecisionResponse.message && toolDecisionResponse.message.content) {
             logInteractionComplete();
-            return toolDecisionResponse.message.content;
+            const sources = cleanupInvocation();
+            return { content: toolDecisionResponse.message.content, sources };
           }
+          cleanupInvocation();
           throw new Error('No content in response');
         }
 
@@ -1214,15 +1285,19 @@ IMPORTANT: Keep the summary under 600 characters.`;
           // Handle response
           if (currentResponse && currentResponse.message && currentResponse.message.content) {
             logInteractionComplete();
-            return currentResponse.message.content;
+            const sources = cleanupInvocation();
+            return { content: currentResponse.message.content, sources };
           }
           robot.logger.debug({ currentResponse });
           if (bailedDueToEmptyToolResults) {
-            return 'I tried using tools but did not get useful results after multiple attempts. Please refine your question or provide more detail.';
+            const sources = cleanupInvocation();
+            return { content: 'I tried using tools but did not get useful results after multiple attempts. Please refine your question or provide more detail.', sources };
           }
           if (bailedDueToNamelessToolCalls) {
-            return 'I received repeated tool calls without a valid tool name from the model and cannot proceed. Please rephrase or ask a different question.';
+            const sources = cleanupInvocation();
+            return { content: 'I received repeated tool calls without a valid tool name from the model and cannot proceed. Please rephrase or ask a different question.', sources };
           }
+          cleanupInvocation();
           throw new Error(`No content in response after ${toolIterationCount} tool call(s). Model may have exceeded max iterations (${maxToolIterations}) or returned invalid response.`);
         }
       } else {
@@ -1243,9 +1318,9 @@ IMPORTANT: Keep the summary under 600 characters.`;
           logInteractionComplete();
 
           // Cleanup invocation context tracking after interaction completes
-          cleanupInvocation();
+          const sources = cleanupInvocation();
 
-          return response.message.content;
+          return { content: response.message.content, sources };
         }
         throw new Error('No content in response');
       }
@@ -1340,11 +1415,15 @@ IMPORTANT: Keep the summary under 600 characters.`;
     // Get conversation history and summary for this user/room
     const { history: conversationHistory, summary: conversationSummary } = getConversationHistory(msg);
     let reactionAdded = false;
+    let statusSet = false;
     try {
-      // Try to add a thinking reaction while processing (adapter-aware)
-      reactionAdded = await addThinkingReaction(msg, REQUEST_THINKING_EMOJI);
+      // Prefer Slack's native "is thinking..." status; fall back to an emoji reaction
+      statusSet = await setThinkingStatus(msg, 'is thinking...');
+      if (!statusSet) {
+        reactionAdded = await addThinkingReaction(msg, REQUEST_THINKING_EMOJI);
+      }
 
-      const response = await askOllama(sanitizedPrompt, msg, conversationHistory, conversationSummary);
+      const { content: response, sources } = await askOllama(sanitizedPrompt, msg, conversationHistory, conversationSummary);
 
       if (!response || !response.trim()) {
         msg.send(formatResponse('Error: Ollama returned an empty response.', msg));
@@ -1359,11 +1438,19 @@ IMPORTANT: Keep the summary under 600 characters.`;
       }
 
       msg.send(formatResponse(response, msg));
+
+      // Post any fetched-source links after the answer, so the thinking indicator
+      // stays the only "in progress" signal in the main chat while work is happening.
+      sendFetchedSources(msg, sources);
     } catch (err) {
       msg.send(formatResponse(`Error: ${err.message || 'An unexpected error occurred while communicating with Ollama.'}`, msg));
     } finally {
-      // Best-effort removal of the reaction once we're done
-      if (reactionAdded) await removeThinkingReaction(msg, REQUEST_THINKING_EMOJI);
+      // Best-effort removal of whichever indicator was actually set
+      if (statusSet) {
+        await clearThinkingStatus(msg);
+      } else if (reactionAdded) {
+        await removeThinkingReaction(msg, REQUEST_THINKING_EMOJI);
+      }
     }
   };
 
