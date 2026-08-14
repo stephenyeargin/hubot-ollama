@@ -143,6 +143,32 @@ function getSlackThreadTs(msg) {
     || undefined;
 }
 
+/**
+ * Race a promise against an AbortSignal, rejecting with a standard
+ * AbortError if the signal fires first. Needed because the `ollama` SDK's
+ * chat()/webFetch() calls don't accept/forward a signal for non-streaming
+ * requests, so passing `signal` in the request object silently does nothing
+ * — this is the only way a timeout can actually cut a request short.
+ * @param {Promise<any>} promise
+ * @param {AbortSignal} signal
+ * @returns {Promise<any>}
+ */
+async function raceAbort(promise, signal) {
+  if (signal.aborted) {
+    throw Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
+  }
+  let onAbort;
+  const abortPromise = new Promise((resolve, reject) => {
+    onAbort = () => reject(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }));
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([promise, abortPromise]);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
+}
+
 module.exports = {
   sanitizeText,
   sanitizeSlackBroadcasts,
@@ -152,4 +178,5 @@ module.exports = {
   getAdapterType,
   getExistingSlackThread,
   getSlackThreadTs,
+  raceAbort,
 };

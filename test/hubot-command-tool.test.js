@@ -151,6 +151,28 @@ describe('hubot-command-tool', () => {
       const result = await runHandler({ command: 'project list' });
       expect(result.response).toBe('here is the list');
     });
+
+    it('should refuse a confirmed mutating command if untrusted web content was ingested earlier in the interaction', async () => {
+      const result = await runHandler({
+        command: 'project delete foo',
+        confirmed: true,
+        _untrustedContentIngested: true
+      });
+      expect(result.error).toMatch(/external web content/);
+      expect(receiveImpl).not.toHaveBeenCalled();
+    });
+
+    it('should still allow a confirmed mutating command when no untrusted content was ingested', async () => {
+      receiveImpl.mockImplementation(async () => {
+        mockRobot.adapter.send({ room: 'general' }, 'deleted!');
+      });
+      const result = await runHandler({
+        command: 'project delete foo',
+        confirmed: true,
+        _untrustedContentIngested: false
+      });
+      expect(result.response).toBe('deleted!');
+    });
   });
 
   describe('handler — addressing', () => {
@@ -320,6 +342,25 @@ describe('hubot-command-tool', () => {
 
       expect(resultA.response).toBe('response for general');
       expect(resultB.response).toBe('response for other-room');
+    });
+
+    it('restores the adapter to its true original methods after concurrent invocations, not a stale capture', async () => {
+      const originalSend = mockRobot.adapter.send;
+      const otherMsg = { message: { user: makeUser({ id: 'U2', name: 'bob', room: 'other-room' }) } };
+      receiveImpl.mockImplementation(async (message) => {
+        mockRobot.adapter.send({ room: message.user.room }, `response for ${message.user.room}`);
+      });
+
+      const promiseA = tool.handler({ command: 'project list' }, mockRobot, mockMsg);
+      const promiseB = tool.handler({ command: 'project list' }, mockRobot, otherMsg);
+      await drainTimersUntilSettled(promiseA, promiseB);
+      await Promise.all([promiseA, promiseB]);
+
+      // If concurrent invocations raced to swap/restore adapter.send, this would
+      // be left pointing at one invocation's now-dead capture closure instead of
+      // the real original — silently dropping any message sent after both calls
+      // complete.
+      expect(mockRobot.adapter.send).toBe(originalSend);
     });
   });
 

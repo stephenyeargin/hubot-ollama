@@ -1,4 +1,13 @@
-const vm = require('node:vm');
+const path = require('node:path');
+const { Worker } = require('node:worker_threads');
+
+// The internal vm timeout given to the worker (see javascript-repl-worker.js).
+// The external HARD_TIMEOUT_MS below must be strictly larger than this so the
+// worker gets a chance to report a normal vm timeout error before we resort
+// to force-terminating it.
+const HARD_TIMEOUT_MS = 2000;
+
+const WORKER_PATH = path.join(__dirname, 'javascript-repl-worker.js');
 
 module.exports = (_ollama, _config, logger) => ({
   name: 'hubot_ollama_run_javascript',
@@ -25,51 +34,48 @@ module.exports = (_ollama, _config, logger) => ({
       throw new Error('Code exceeds maximum length of 10000 characters');
     }
 
-    // Create a null-prototype sandbox and expose a minimal, frozen API
-    const context = Object.create(null);
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(WORKER_PATH, { workerData: { code } });
+      let settled = false;
 
-    // Deterministic, computation-focused built-ins
-    Object.defineProperty(context, 'Math', { value: Object.freeze(Math), enumerable: true });
-    Object.defineProperty(context, 'JSON', { value: Object.freeze(JSON), enumerable: true });
-    Object.defineProperty(context, 'isNaN', { value: isNaN, enumerable: true });
-    Object.defineProperty(context, 'isFinite', { value: isFinite, enumerable: true });
-    Object.defineProperty(context, 'parseInt', { value: parseInt, enumerable: true });
-    Object.defineProperty(context, 'parseFloat', { value: parseFloat, enumerable: true });
+      const finish = (fn) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(hardTimeout);
+        // Forcibly kill the worker's whole JS realm/event loop, so code that
+        // escaped vm's synchronous-only timeout via a microtask or timer
+        // can't keep running after we've already moved on.
+        worker.terminate().catch(() => {});
+        fn();
+      };
 
-    try {
-      const script = new vm.Script(code, { displayErrors: true });
-      const sandbox = vm.createContext(context);
+      const hardTimeout = setTimeout(() => {
+        logger?.debug('JavaScript REPL: hard-terminating worker after exceeding external timeout');
+        finish(() => reject(new Error('Script execution timed out')));
+      }, HARD_TIMEOUT_MS);
 
-      // Execute in a new context with a strict timeout to reduce DoS risk
-      const result = script.runInNewContext(sandbox, { timeout: 1000 });
-
-      // Handle various result types
-      if (result === undefined) {
-        return 'undefined';
-      }
-      if (result === null) {
-        return 'null';
-      }
-      if (typeof result === 'object') {
-        // Safe serialization with truncation and circular handling
-        const seen = new WeakSet();
-        const MAX_OUTPUT_LEN = 2000;
-        const json = JSON.stringify(result, (key, value) => {
-          if (typeof value === 'object' && value !== null) {
-            if (seen.has(value)) return '[Circular]';
-            seen.add(value);
+      worker.once('message', (msg) => {
+        finish(() => {
+          if (msg && msg.ok) {
+            resolve(msg.value);
+          } else {
+            const message = (msg && msg.message) || 'Script execution failed';
+            logger?.debug(`JavaScript REPL error: ${message}`);
+            reject(new Error(message));
           }
-          if (typeof value === 'function') return '[Function]';
-          return value;
         });
-        return json.length > MAX_OUTPUT_LEN ? json.slice(0, MAX_OUTPUT_LEN) + '…[truncated]' : json;
-      }
+      });
 
-      const str = String(result);
-      return str.length > 2000 ? str.slice(0, 2000) + '…[truncated]' : str;
-    } catch (err) {
-      logger?.debug(`JavaScript REPL error: ${err.message}`);
-      throw err;
-    }
+      worker.once('error', (err) => {
+        finish(() => {
+          logger?.debug(`JavaScript REPL worker error: ${err && err.message}`);
+          reject(err);
+        });
+      });
+
+      worker.once('exit', (exitCode) => {
+        finish(() => reject(new Error(`Script execution worker exited unexpectedly (code ${exitCode})`)));
+      });
+    });
   }
 });

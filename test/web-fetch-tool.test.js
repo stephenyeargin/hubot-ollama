@@ -262,6 +262,49 @@ describe('web-fetch-tool', () => {
     ]);
   });
 
+  test('serializes concurrent invocations to avoid lost updates on the shared brain key', async () => {
+    const mockOllama = {};
+    const config = {
+      WEB_MAX_RESULTS: 5,
+      WEB_MAX_BYTES: 120000,
+      WEB_FETCH_CONCURRENCY: 3,
+      WEB_TIMEOUT_MS: 45000
+    };
+    const logger = { debug: vi.fn(), error: vi.fn(), warn: vi.fn() };
+
+    // Simulate a brain adapter that returns a fresh snapshot on get() rather
+    // than a live shared reference (e.g. a persisted/cloning brain), so a
+    // stale read would silently lose the other invocation's write if the
+    // read-modify-write weren't serialized.
+    let store = {};
+    const mockRobot = {
+      brain: {
+        get: vi.fn((key) => (key === 'ollamaFetchedUrls' ? JSON.parse(JSON.stringify(store)) : {})),
+        set: vi.fn((key, value) => {
+          if (key === 'ollamaFetchedUrls') store = value;
+        })
+      }
+    };
+
+    ollamaClient.runWebFetchMany
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        setTimeout(() => resolve([{ url: 'https://example.com/a', text: 'A' }]), 30);
+      }))
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        setTimeout(() => resolve([{ url: 'https://example.com/b', text: 'B' }]), 5);
+      }));
+
+    const tool = webFetchTool(mockOllama, config, logger);
+
+    await Promise.all([
+      tool.handler({ urls: ['https://example.com/a'], _invocationContextKey: 'inv-a' }, mockRobot, {}),
+      tool.handler({ urls: ['https://example.com/b'], _invocationContextKey: 'inv-b' }, mockRobot, {})
+    ]);
+
+    expect(store['inv-a']).toEqual(['https://example.com/a']);
+    expect(store['inv-b']).toEqual(['https://example.com/b']);
+  });
+
   test('handler validates URLs', async () => {
     const mockOllama = {};
     const config = {
