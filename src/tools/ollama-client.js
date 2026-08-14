@@ -1,6 +1,6 @@
 // Ollama API logic and helpers for hubot-ollama
 
-const { truncate } = require('../utils/ollama-utils');
+const { truncate, raceAbort } = require('../utils/ollama-utils');
 
 async function runWebSearch(ollama, query, maxResults) {
   const searchRes = await ollama.webSearch({ query, max_results: maxResults });
@@ -27,7 +27,7 @@ async function runWebFetchMany(ollama, urls, maxBytes, concurrency, timeoutMs, l
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), timeoutMs);
-        const res = await ollama.webFetch({ url: u, signal: controller.signal });
+        const res = await raceAbort(ollama.webFetch({ url: u }), controller.signal);
         clearTimeout(timeout);
         let body = (res && (res.text || res.content || res.body || res.data)) || '';
         if (!body && entry.content) {

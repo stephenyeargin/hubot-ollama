@@ -45,7 +45,7 @@ Prompts are sanitized and truncated if they exceed the configured limit.
 |----------|----------|---------|---------|
 | `HUBOT_OLLAMA_MODEL` | Optional | `llama3.2` | Model name (validated: `[A-Za-z0-9._:-]+`) |
 | `HUBOT_OLLAMA_HOST` | Optional | `http://127.0.0.1:11434` | Ollama server URL |
-| `HUBOT_OLLAMA_API_KEY` | Optional | (unset) | API key for [Ollama cloud](https://ollama.com/settings/keys) access |
+| `HUBOT_OLLAMA_API_KEY` | Optional | (unset) | API key for [Ollama cloud](https://ollama.com/settings/keys) access. `OLLAMA_API_KEY` is also accepted as a fallback |
 | `HUBOT_OLLAMA_SYSTEM_PROMPT` | Optional | Built‑in concise chat prompt | Override system instructions |
 | `HUBOT_OLLAMA_MAX_PROMPT_CHARS` | Optional | `2000` | Truncate overly long user prompts |
 | `HUBOT_OLLAMA_TIMEOUT_MS` | Optional | `60000` (60 sec) | Abort request after this duration |
@@ -56,6 +56,7 @@ Prompts are sanitized and truncated if they exceed the configured limit.
 | `HUBOT_OLLAMA_AMBIENT_CONTEXT` | Optional | `false` | Passively capture recent room messages as background context for answers |
 | `HUBOT_OLLAMA_AMBIENT_CONTEXT_SIZE` | Optional | `10` | Number of recent ambient messages to retain per room |
 | `HUBOT_OLLAMA_COMMAND_TOOL_ENABLED` | Optional | `false` | Allow the LLM to invoke other Hubot commands on the user's behalf and read the response |
+| `HUBOT_OLLAMA_JS_REPL_ENABLED` | Optional | `false` | Allow the LLM to execute JavaScript in a sandboxed REPL |
 | `HUBOT_OLLAMA_MEMORY_ENABLED` | Optional | `true` | Allow the LLM to save/recall persistent memories via `robot.brain` |
 | `HUBOT_OLLAMA_MEMORY_MAX_ENTRIES` | Optional | `200` | Max memory entries per context scope before least-recently-accessed eviction |
 | `HUBOT_OLLAMA_MEMORY_MAX_CONTENT_CHARS` | Optional | `4000` | Max characters stored per memory entry |
@@ -219,6 +220,17 @@ gives up and reports no response.
 export HUBOT_OLLAMA_COMMAND_TOOL_ENABLED=true
 ```
 
+**JavaScript REPL Tool (opt-in):**
+When `HUBOT_OLLAMA_JS_REPL_ENABLED=true`, the bot registers `hubot_ollama_run_javascript`, letting the model
+execute arbitrary JavaScript in a sandboxed `node:vm` context to perform calculations or data transformations
+it can't reliably do by reasoning alone. This is disabled by default because it lets the LLM run arbitrary
+computation on the bot's host — only enable it if you trust the model/prompting setup and the runtime
+environment the bot is deployed in.
+
+```bash
+export HUBOT_OLLAMA_JS_REPL_ENABLED=true
+```
+
 **Persistent Memory (on by default):**
 The bot registers `hubot_ollama_memory`, a caching aid the model can use to avoid re-deriving, re-fetching, or
 re-asking for the same information across conversations — e.g. a fact the user already gave it, or a slow tool
@@ -335,6 +347,8 @@ Both local and cloud models share the same API, making the integration seamless 
 - Uses official Ollama JavaScript library with proper API communication.
 - Model name validation & prompt sanitization (strip control chars).
 - When `HUBOT_OLLAMA_WEB_ENABLED=true`, web search results are fetched from external sites. Only the fetched pages — not your private prompts — are sent over the network.
+- Web search/fetch requests are performed by Ollama's own hosted API (`ollama.webSearch`/`ollama.webFetch`), not by this bot directly — this code never opens a connection to a model-supplied URL itself. SSRF protection (blocking internal IPs, `file://`, cloud metadata endpoints, etc.) is therefore Ollama's responsibility, not this script's. This is expected when using [Ollama Cloud](https://ollama.com); if you point `HUBOT_OLLAMA_HOST` at a self-hosted Ollama instance, confirm it applies equivalent protections before enabling `HUBOT_OLLAMA_WEB_ENABLED`.
+- Tool results (including fetched web content) are sent to the model with a distinct `tool` role, not `user` — this lets the model's own role-based trust hierarchy separate real user turns from external/tool data, on top of the `<tool_result>` framing. Once any interaction has pulled in web content, `hubot_ollama_run_command` refuses further state-changing commands for the rest of that interaction even if the model claims `confirmed: true`, since that confirmation could have been steered by injected content rather than the actual user.
 
 ## Troubleshooting
 | Symptom | Check |

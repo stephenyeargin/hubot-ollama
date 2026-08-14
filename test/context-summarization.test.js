@@ -1,343 +1,209 @@
+const nock = require('nock');
+
+const Helper = require('./helpers/hubot-helper');
+
+const helper = new Helper('./../src/hubot-ollama.js');
+
 describe('Context Summarization', () => {
-  let robot;
-  let brain;
+  let room = null;
+  const OLLAMA_HOST = 'http://127.0.0.1:11434';
 
-  beforeEach(() => {
-    // Mock brain
-    brain = {};
-    brain.get = (key) => brain[key];
-    brain.set = (key, value) => { brain[key] = value; };
-
-    // Mock robot
-    robot = {
-      name: 'testbot',
-      adapterName: 'test',
-      logger: {
-        debug: vi.fn(),
-        info: vi.fn(),
-        warn: vi.fn(),
-        error: vi.fn()
-      },
-      brain,
-      respond: vi.fn()
-    };
-
-    // Initialize empty contexts
-    robot.brain.set('ollamaContexts', {});
-
-    // Set environment defaults
+  beforeEach(async () => {
+    process.env.HUBOT_OLLAMA_MODEL = 'llama3.2';
     process.env.HUBOT_OLLAMA_CONTEXT_TTL_MS = '600000';
     process.env.HUBOT_OLLAMA_CONTEXT_TURNS = '5';
+    room = await helper.createRoom();
+    ['debug', 'info', 'warn', 'warning', 'error'].forEach((method) => {
+      room.robot.logger[method] = vi.fn();
+    });
+    nock.cleanAll();
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    room.destroy();
+    nock.cleanAll();
+    delete process.env.HUBOT_OLLAMA_MODEL;
     delete process.env.HUBOT_OLLAMA_CONTEXT_TTL_MS;
     delete process.env.HUBOT_OLLAMA_CONTEXT_TURNS;
+    delete process.env.HUBOT_OLLAMA_TIMEOUT_MS;
   });
 
-  it('should not create summary for short conversations', () => {
-    const contexts = robot.brain.get('ollamaContexts');
-    const contextKey = 'testroom:user123';
+  // Regular (non-summarization) chat replies use the default system prompt;
+  // summarization calls use a distinct one, so this tells them apart without
+  // relying on call ordering.
+  const mockAsk = (reply) => nock(OLLAMA_HOST)
+    .post('/api/chat', (body) => !/summarizing a chat conversation/.test(body.messages[0]?.content || ''))
+    .reply(200, { message: { role: 'assistant', content: reply }, done: true });
 
-    // Add only 2 turns (equal to KEEP_RAW_TURNS)
-    contexts[contextKey] = {
-      history: [
-        { user: 'Hello', assistant: 'Hi there!' },
-        { user: 'How are you?', assistant: 'I am fine, thanks!' }
-      ],
-      summary: null,
-      summarizedUntil: null,
-      lastUpdated: Date.now()
-    };
-
-    // Should not trigger summarization with only 2 turns
-    expect(contexts[contextKey].history.length).toBe(2);
-    expect(contexts[contextKey].summary).toBeNull();
-  });
-
-  it('should have correct data model structure for new contexts', () => {
-    const contexts = robot.brain.get('ollamaContexts');
-    const contextKey = 'testroom:user123';
-
-    contexts[contextKey] = {
-      history: [],
-      summary: null,
-      summarizedUntil: null,
-      lastUpdated: Date.now()
-    };
-
-    expect(contexts[contextKey]).toHaveProperty('history');
-    expect(contexts[contextKey]).toHaveProperty('summary');
-    expect(contexts[contextKey]).toHaveProperty('summarizedUntil');
-    expect(contexts[contextKey]).toHaveProperty('lastUpdated');
-  });
-
-  it('should cap summary length at 600 characters as safety fallback', async () => {
-    const longSummary = 'a'.repeat(1000);
-    const safetyThreshold = 650;
-    const capLength = 600;
-
-    // Simulate capping (only when exceeding safety threshold)
-    const capped = longSummary.length > safetyThreshold ? longSummary.slice(0, capLength) + '...' : longSummary;
-
-    expect(capped.length).toBe(capLength + 3); // +3 for '...'
-    expect(capped.endsWith('...')).toBe(true);
-
-    // Summary within limit should not be capped
-    const shortSummary = 'a'.repeat(600);
-    const notCapped = shortSummary.length > safetyThreshold ? shortSummary.slice(0, capLength) + '...' : shortSummary;
-    expect(notCapped.length).toBe(600);
-    expect(notCapped.endsWith('...')).toBe(false);
-  });
-
-  it('should preserve recent turns when summarizing', () => {
-    const KEEP_RAW_TURNS = 2;
-    const allTurns = [
-      { user: 'Turn 1', assistant: 'Response 1' },
-      { user: 'Turn 2', assistant: 'Response 2' },
-      { user: 'Turn 3', assistant: 'Response 3' },
-      { user: 'Turn 4', assistant: 'Response 4' },
-      { user: 'Turn 5', assistant: 'Response 5' }
-    ];
-
-    const turnsToSummarize = allTurns.slice(0, allTurns.length - KEEP_RAW_TURNS);
-    const remainingTurns = allTurns.slice(allTurns.length - KEEP_RAW_TURNS);
-
-    expect(turnsToSummarize.length).toBe(3);
-    expect(remainingTurns.length).toBe(2);
-    expect(remainingTurns[0].user).toBe('Turn 4');
-    expect(remainingTurns[1].user).toBe('Turn 5');
-  });
-
-  it('should include user display names for room-scope contexts', () => {
-    const CONTEXT_SCOPE = 'room';
-    const turn = {
-      user: 'Hello',
-      assistant: 'Hi',
-      userDisplayName: 'Test User (@testuser)'
-    };
-
-    let userText = turn.user;
-    if (CONTEXT_SCOPE === 'room' && turn.userDisplayName) {
-      userText = `${turn.userDisplayName}: ${turn.user}`;
+  const mockSummarization = (options = {}) => {
+    const interceptor = nock(OLLAMA_HOST)
+      .post('/api/chat', (body) => /summarizing a chat conversation/.test(body.messages[0]?.content || ''));
+    if (options.delayMs) interceptor.delayConnection(options.delayMs);
+    if (options.error) {
+      return interceptor.replyWithError(options.error);
     }
+    return interceptor.reply(200, { message: { role: 'assistant', content: options.content ?? 'Summary of the conversation.' }, done: true });
+  };
 
-    expect(userText).toBe('Test User (@testuser): Hello');
-  });
+  const getContext = () => {
+    const contexts = room.robot.brain.get('ollamaContexts');
+    return Object.values(contexts || {})[0];
+  };
 
-  it('should handle expired contexts correctly', () => {
-    const contexts = robot.brain.get('ollamaContexts');
-    const contextKey = 'testroom:user123';
-    const TTL_MS = 600000;
-
-    // Create an expired context
-    contexts[contextKey] = {
-      history: [
-        { user: 'Old message', assistant: 'Old response' }
-      ],
-      summary: 'This is an old summary',
-      summarizedUntil: Date.now() - TTL_MS - 1000,
-      lastUpdated: Date.now() - TTL_MS - 1000
-    };
-
-    const now = Date.now();
-    const age = now - contexts[contextKey].lastUpdated;
-
-    // Context should be expired
-    expect(age).toBeGreaterThan(TTL_MS);
-
-    // Simulate expiration cleanup
-    if (age > TTL_MS) {
-      delete contexts[contextKey];
+  // Drives 4 sequential asks from the same user, which is enough turns
+  // (CONTEXT_TURNS default 5, KEEP_RAW_TURNS hardcoded at 2) to make the 4th
+  // turn's storeConversationTurn() schedule a real summarizeContext() call.
+  const drive4Turns = async () => {
+    for (let i = 1; i <= 4; i++) {
+      mockAsk(`Reply ${i}`);
+      room.user.say('alice', `hubot ask question ${i}`);
+      await new Promise((resolve) => setTimeout(resolve, 120));
     }
+  };
 
-    expect(contexts[contextKey]).toBeUndefined();
+  it('summarizes older turns and keeps only the most recent 2 raw', async () => {
+    mockSummarization({ content: 'Alice discussed questions 1-2.' });
+
+    await drive4Turns();
+    // Summarization is triggered via setImmediate + a real HTTP call; give it
+    // room to complete beyond the per-turn wait already done in drive4Turns.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(nock.isDone()).toBe(true);
+    const context = getContext();
+    expect(context.summary).toBe('Alice discussed questions 1-2.');
+    expect(context.history).toHaveLength(2);
+    expect(context.history[0].user).toBe('question 3');
+    expect(context.history[1].user).toBe('question 4');
+    expect(context.summarizedUntil).toBeGreaterThan(0);
   });
 
-  it('should format summarization prompt correctly for first-time summarization', () => {
-    const turns = [
-      { user: 'What is JavaScript?', assistant: 'JavaScript is a programming language.' },
-      { user: 'Tell me more', assistant: 'It is used for web development.' }
-    ];
+  it('includes the previous summary in the prompt on a rolling update', async () => {
+    mockSummarization({ content: 'First summary.' });
+    await drive4Turns();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(getContext().summary).toBe('First summary.');
 
-    const turnsText = turns.map(t => `User: ${t.user}\nAssistant: ${t.assistant}`).join('\n\n');
-    const expectedPrompt = `Summarize the following conversation turns so that another assistant can continue the discussion naturally:\n\n<turns>\n${turnsText}\n</turns>`;
+    // Two more turns bring history back to 4 (2 kept raw + 2 new), enough to
+    // trigger a second, rolling summarization pass.
+    let rollingRequestBody = null;
+    const rollingScope = nock(OLLAMA_HOST)
+      .post('/api/chat', (body) => {
+        const isSummarization = /summarizing a chat conversation/.test(body.messages[0]?.content || '');
+        if (isSummarization) rollingRequestBody = body;
+        return isSummarization;
+      })
+      .reply(200, { message: { role: 'assistant', content: 'Updated summary.' }, done: true });
 
-    expect(expectedPrompt).toContain('Summarize the following');
-    expect(expectedPrompt).toContain('What is JavaScript?');
-    expect(expectedPrompt).toContain('Tell me more');
+    for (let i = 5; i <= 6; i++) {
+      mockAsk(`Reply ${i}`);
+      room.user.say('alice', `hubot ask question ${i}`);
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(rollingScope.isDone()).toBe(true);
+    expect(rollingRequestBody.messages[1].content).toContain('Previous summary:');
+    expect(rollingRequestBody.messages[1].content).toContain('First summary.');
+    expect(getContext().summary).toBe('Updated summary.');
   });
 
-  it('should format summarization prompt correctly for rolling update', () => {
-    const existingSummary = 'User asked about JavaScript basics.';
-    const newTurns = [
-      { user: 'What about TypeScript?', assistant: 'TypeScript is a superset of JavaScript.' }
-    ];
-
-    const turnsText = newTurns.map(t => `User: ${t.user}\nAssistant: ${t.assistant}`).join('\n\n');
-    const expectedPrompt = `Previous summary:\n${existingSummary}\n\nNew conversation turns:\n<turns>\n${turnsText}\n</turns>\n\nProduce an updated summary that incorporates the new information.`;
-
-    expect(expectedPrompt).toContain('Previous summary:');
-    expect(expectedPrompt).toContain(existingSummary);
-    expect(expectedPrompt).toContain('What about TypeScript?');
-  });
-
-  it('should not block main response on summarization', async () => {
-    // Simulate async summarization trigger
-    await new Promise((resolve) => {
-      setImmediate(resolve);
+  it('leaves history untouched when the summarization call times out', async () => {
+    room.destroy();
+    process.env.HUBOT_OLLAMA_TIMEOUT_MS = '50';
+    room = await helper.createRoom();
+    ['debug', 'info', 'warn', 'warning', 'error'].forEach((method) => {
+      room.robot.logger[method] = vi.fn();
     });
 
-    // Main response continues immediately
-    expect(true).toBe(true);
+    // Regular ask replies resolve immediately so the short timeout never
+    // affects them — only the summarization call is deliberately slow.
+    mockSummarization({ content: 'Should not be used.', delayMs: 200 });
+
+    await drive4Turns();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const context = getContext();
+    expect(context.summary).toBeNull();
+    expect(context.history).toHaveLength(4);
+    expect(room.robot.logger.warn).toHaveBeenCalledWith(expect.stringContaining('Summarization timed out'));
   });
 
-  it('should handle summarization timeout gracefully', async () => {
-    const TIMEOUT_MS = 100;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  it('leaves history untouched when the summarization response is empty', async () => {
+    mockSummarization({ content: '' });
 
-    try {
-      // Simulate a long-running summarization
-      await new Promise((resolve, reject) => {
-        const longTask = setTimeout(resolve, 200);
-        controller.signal.addEventListener('abort', () => {
-          clearTimeout(longTask);
-          reject(new Error('AbortError'));
-        });
-      });
-      clearTimeout(timeout);
-      throw new Error('Should have timed out');
-    } catch (error) {
-      clearTimeout(timeout);
-      expect(error.message).toBe('AbortError');
-    }
+    await drive4Turns();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    const context = getContext();
+    expect(context.summary).toBeNull();
+    expect(context.history).toHaveLength(4);
+    expect(room.robot.logger.warn).toHaveBeenCalledWith(expect.stringContaining('empty content'));
   });
 
-  it('should handle empty summarization response', () => {
-    const emptySummary = '';
+  it('caps an overly long summary at 600 characters', async () => {
+    mockSummarization({ content: 'a'.repeat(1000) });
 
-    // Should skip empty summaries
-    if (!emptySummary || emptySummary.length === 0) {
-      expect(emptySummary).toBe('');
-    } else {
-      throw new Error('Should have skipped empty summary');
-    }
+    await drive4Turns();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    const context = getContext();
+    expect(context.summary).toHaveLength(603);
+    expect(context.summary.endsWith('...')).toBe(true);
   });
 
-  it('should inject summary as system message in prompt assembly', () => {
-    const messages = [
-      { role: 'system', content: 'You are a helpful chatbot.' }
-    ];
+  it('does not clobber a concurrent write to a different context made during summarization', async () => {
+    mockSummarization({ content: 'Alice summary.', delayMs: 100 });
 
-    const summary = 'User has been asking about programming languages.';
-
-    // Inject summary
-    if (summary) {
-      messages.push({ role: 'system', content: `Conversation summary:\n${summary}` });
+    // Get alice to 4 turns (triggers a slow summarization call) without
+    // waiting for it to finish, then have a different user (different
+    // room-user context key) write a turn while it's still in flight.
+    for (let i = 1; i <= 4; i++) {
+      mockAsk(`Reply ${i}`);
+      room.user.say('alice', `hubot ask question ${i}`);
+      await new Promise((resolve) => setTimeout(resolve, 120));
     }
 
-    expect(messages.length).toBe(2);
-    expect(messages[1].role).toBe('system');
-    expect(messages[1].content).toContain('Conversation summary:');
-    expect(messages[1].content).toContain(summary);
+    mockAsk('Bob reply');
+    room.user.say('bob', 'hubot ask bob question');
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    const contexts = room.robot.brain.get('ollamaContexts');
+    const aliceContext = Object.values(contexts).find((c) => c.summary);
+    const bobContext = Object.values(contexts).find((c) => !c.summary);
+
+    expect(aliceContext.summary).toBe('Alice summary.');
+    expect(bobContext).toBeDefined();
+    expect(bobContext.history.some((t) => t.user === 'bob question')).toBe(true);
   });
 
-  it('should maintain correct message ordering with summary', () => {
-    const messages = [
-      { role: 'system', content: 'System prompt' }
-    ];
+  it('does not run a second summarization while one is already in progress for the same context', async () => {
+    const scope = mockSummarization({ content: 'Only once.', delayMs: 150 });
 
-    const summary = 'Summary text';
-    const history = [
-      { user: 'Hello', assistant: 'Hi' }
-    ];
-
-    // Inject summary
-    if (summary) {
-      messages.push({ role: 'system', content: `Conversation summary:\n${summary}` });
+    for (let i = 1; i <= 3; i++) {
+      mockAsk(`Reply ${i}`);
+      room.user.say('alice', `hubot ask question ${i}`);
+      await new Promise((resolve) => setTimeout(resolve, 120));
     }
 
-    // Add history
-    for (const turn of history) {
-      messages.push({ role: 'user', content: turn.user });
-      messages.push({ role: 'assistant', content: turn.assistant });
-    }
+    // Fire the 4th and 5th turns back-to-back (both replies resolve fast, with
+    // no delay), so the 5th turn's storeConversationTurn() runs its lock check
+    // while the 4th turn's summarizeContext() is still awaiting its
+    // deliberately slow (150ms) summarization response.
+    mockAsk('Reply 4');
+    room.user.say('alice', 'hubot ask question 4');
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
-    // Add current prompt
-    messages.push({ role: 'user', content: 'Current question' });
+    mockAsk('Reply 5');
+    room.user.say('alice', 'hubot ask question 5');
+    await new Promise((resolve) => setTimeout(resolve, 300));
 
-    // Expected order: system, summary, history (user+assistant), current user
-    expect(messages[0].role).toBe('system');
-    expect(messages[1].role).toBe('system'); // summary
-    expect(messages[2].role).toBe('user'); // history user
-    expect(messages[3].role).toBe('assistant'); // history assistant
-    expect(messages[4].role).toBe('user'); // current
-  });
-
-  it('should release lock on summarization error', async () => {
-    const locks = {};
-    const contextKey = 'testkey';
-
-    try {
-      locks[contextKey] = true;
-      throw new Error('Summarization failed');
-    } catch (error) {
-      delete locks[contextKey];
-      expect(error.message).toBe('Summarization failed');
-    }
-
-    expect(locks[contextKey]).toBeUndefined();
-  });
-
-  it('should skip summarization when already in progress', () => {
-    const locks = {};
-    const contextKey = 'testkey';
-
-    locks[contextKey] = true;
-
-    // Check lock before starting
-    if (locks[contextKey]) {
-      // Skip
-      expect(locks[contextKey]).toBe(true);
-    } else {
-      throw new Error('Should have skipped due to lock');
-    }
-  });
-
-  it('should require at least 2 old turns to summarize', () => {
-    const KEEP_RAW_TURNS = 2;
-    const allTurns = [
-      { user: 'Turn 1', assistant: 'Response 1' },
-      { user: 'Turn 2', assistant: 'Response 2' },
-      { user: 'Turn 3', assistant: 'Response 3' }
-    ];
-
-    const turnsToSummarize = allTurns.slice(0, allTurns.length - KEEP_RAW_TURNS);
-
-    // Only 1 turn to summarize, should skip
-    expect(turnsToSummarize.length).toBe(1);
-    expect(turnsToSummarize.length < 2).toBe(true);
-  });
-
-  it('should handle context with no history gracefully', () => {
-    const context = {
-      history: [],
-      summary: null,
-      summarizedUntil: null,
-      lastUpdated: Date.now()
-    };
-
-    const KEEP_RAW_TURNS = 2;
-
-    if (!context || !context.history) {
-      throw new Error('Context should exist');
-    }
-
-    if (context.history.length <= KEEP_RAW_TURNS) {
-      // Should skip summarization
-      expect(context.history.length).toBe(0);
-    }
+    // Exactly one summarization HTTP call was made — the 5th turn's
+    // storeConversationTurn() saw the lock already held (by the 4th turn's
+    // in-flight summarizeContext()) and skipped scheduling its own call
+    // entirely, rather than the two racing.
+    expect(scope.isDone()).toBe(true);
+    const context = getContext();
+    expect(context.summary).toBe('Only once.');
   });
 });

@@ -19,7 +19,7 @@ class MockOllama {
     const hasWebSearchTool = req.tools && req.tools.some(t => (t.function && t.function.name) === 'hubot_ollama_web_search');
     const hasWebFetchTool = req.tools && req.tools.some(t => (t.function && t.function.name) === 'hubot_ollama_web_fetch');
 
-    if (req.tools && req.tools.length > 0 && hasWebSearchTool && !req.messages.some(m => m.role === 'user' && typeof m.content === 'string' && /^(?:\{|<tool_result)/.test(m.content))) {
+    if (req.tools && req.tools.length > 0 && hasWebSearchTool && !req.messages.some(m => m.role === 'tool' && typeof m.content === 'string' && /^(?:\{|<tool_result)/.test(m.content))) {
       // Simulate the model choosing the web search tool
       return {
         message: {

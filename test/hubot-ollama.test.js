@@ -1,5 +1,7 @@
 const nock = require('nock');
 
+const registry = require('../src/tool-registry');
+
 const Helper = require('./helpers/hubot-helper');
 const { createMockTextMessage } = require('./helpers/mock-message');
 
@@ -387,11 +389,11 @@ describe('hubot-ollama', () => {
         delete process.env.HUBOT_OLLAMA_TIMEOUT_MS;
       });
 
-      it('handles timeout configuration', () => {
-        // Timeout is configured, but our mock delay doesn't actually prevent response
-        // Just verify no crash occurred
+      it('aborts the in-flight request and reports the timeout', () => {
         const botMessage = room.messages.find((m) => m[0] === 'hubot');
         expect(botMessage).toBeDefined();
+        expect(botMessage[1]).toContain('timed out after 50 ms');
+        expect(botMessage[1]).not.toContain('response');
       });
     });
   });
@@ -420,6 +422,35 @@ describe('hubot-ollama', () => {
         expect(nock.isDone()).toBe(true);
       });
     });
+
+    describe('invalid integer env vars fall back to defaults instead of NaN', () => {
+      beforeEach(async () => {
+        room.destroy();
+        process.env.HUBOT_OLLAMA_TIMEOUT_MS = 'not-a-number';
+        room = await helper.createRoom();
+        ['debug', 'info', 'warn', 'warning', 'error'].forEach((method) => {
+          room.robot.logger[method] = vi.fn();
+        });
+
+        mockOllamaChat('ok');
+        room.user.say('alice', 'hubot ask test');
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      });
+
+      afterEach(() => {
+        delete process.env.HUBOT_OLLAMA_TIMEOUT_MS;
+      });
+
+      it('uses the default timeout rather than aborting instantly', () => {
+        // Module init logs the fallback warning before this test's logger
+        // mock is installed, so this asserts the functional behavior instead:
+        // with the buggy Math.max(1, NaN) === NaN, the request would abort
+        // almost instantly (Node clamps a non-finite setTimeout delay to
+        // 1ms), so getting a normal reply back proves the default was used.
+        expect(room.messages).toContainEqual(['hubot', 'ok']);
+      });
+    });
+
     describe('custom model', () => {
       beforeEach(async () => {
         // Need to recreate the room with the new env var
@@ -605,6 +636,72 @@ describe('hubot-ollama', () => {
           ['alice', 'hubot ask test cloud'],
           ['hubot', 'Response from cloud model'],
         ]);
+      });
+    });
+
+    describe('OLLAMA_API_KEY fallback against a non-ollama.com host', () => {
+      const customHost = 'https://custom-gateway.example.com';
+      const apiKey = 'fallback-api-key-12345';
+
+      beforeEach(async () => {
+        room.destroy();
+        process.env.HUBOT_OLLAMA_HOST = customHost;
+        process.env.OLLAMA_API_KEY = apiKey;
+        room = await helper.createRoom();
+        ['debug', 'info', 'warning', 'error'].forEach((method) => {
+          room.robot.logger[method] = vi.fn();
+        });
+
+        nock(customHost)
+          .post('/api/chat')
+          .matchHeader('Authorization', `Bearer ${apiKey}`)
+          .reply(200, {
+            message: { role: 'assistant', content: 'Response via fallback key' },
+            done: true
+          });
+
+        room.user.say('alice', 'hubot ask test fallback key');
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      });
+
+      afterEach(() => {
+        delete process.env.HUBOT_OLLAMA_HOST;
+        delete process.env.OLLAMA_API_KEY;
+      });
+
+      it('sends the Authorization header using OLLAMA_API_KEY', () => {
+        expect(nock.isDone()).toBe(true);
+        expect(room.messages).toContainEqual(['hubot', 'Response via fallback key']);
+      });
+    });
+
+    describe('JS REPL tool opt-in gating', () => {
+      afterEach(() => {
+        registry.clearTools();
+        delete process.env.HUBOT_OLLAMA_JS_REPL_ENABLED;
+      });
+
+      it('is not registered when HUBOT_OLLAMA_JS_REPL_ENABLED is unset', async () => {
+        room.destroy();
+        registry.clearTools();
+        room = await helper.createRoom();
+        ['debug', 'info', 'warning', 'error'].forEach((method) => {
+          room.robot.logger[method] = vi.fn();
+        });
+
+        expect(registry.getTools()).not.toHaveProperty('hubot_ollama_run_javascript');
+      });
+
+      it('is registered when HUBOT_OLLAMA_JS_REPL_ENABLED=true', async () => {
+        room.destroy();
+        registry.clearTools();
+        process.env.HUBOT_OLLAMA_JS_REPL_ENABLED = 'true';
+        room = await helper.createRoom();
+        ['debug', 'info', 'warning', 'error'].forEach((method) => {
+          room.robot.logger[method] = vi.fn();
+        });
+
+        expect(registry.getTools()).toHaveProperty('hubot_ollama_run_javascript');
       });
     });
   });
@@ -1108,10 +1205,17 @@ describe('hubot-ollama', () => {
   describe('Tool Workflow', () => {
     describe('tool workflow configuration', () => {
       it('respects TOOLS_ENABLED=false configuration', async () => {
+        // TOOLS_ENABLED is read at module-load time, so the room must be
+        // recreated after setting the env var for it to take effect.
+        room.destroy();
         process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'false';
+        room = await helper.createRoom();
+        ['debug', 'info', 'warn', 'warning', 'error'].forEach((method) => {
+          room.robot.logger[method] = vi.fn();
+        });
 
         nock(OLLAMA_HOST)
-          .post('/api/show', { name: 'llama3.2' })
+          .post('/api/show', { model: 'llama3.2' })
           .reply(200, { capabilities: ['tools'] });
 
         // Single call without tools
@@ -1138,7 +1242,7 @@ describe('hubot-ollama', () => {
         process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'true';
 
         nock(OLLAMA_HOST)
-          .post('/api/show', { name: 'llama3.2' })
+          .post('/api/show', { model: 'llama3.2' })
           .reply(200, { capabilities: [] });
 
         // Single call without tools
@@ -1165,7 +1269,7 @@ describe('hubot-ollama', () => {
         process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'true';
 
         nock(OLLAMA_HOST)
-          .post('/api/show', { name: 'llama3.2' })
+          .post('/api/show', { model: 'llama3.2' })
           .reply(200, { capabilities: ['tools'] });
 
         // Model decides not to use a tool
@@ -1189,7 +1293,7 @@ describe('hubot-ollama', () => {
         process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'true';
 
         nock(OLLAMA_HOST)
-          .post('/api/show', { name: 'llama3.2' })
+          .post('/api/show', { model: 'llama3.2' })
           .reply(200, { capabilities: ['tools'] });
 
         // PHASE 1: First call - model decides to use hubot_ollama_get_current_time
@@ -1236,7 +1340,7 @@ describe('hubot-ollama', () => {
         process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'true';
 
         nock(OLLAMA_HOST)
-          .post('/api/show', { name: 'llama3.2' })
+          .post('/api/show', { model: 'llama3.2' })
           .reply(200, { capabilities: ['tools'] });
 
         // PHASE 1: Model invokes non-existent tool
@@ -1280,7 +1384,7 @@ describe('hubot-ollama', () => {
 
         // ollama.show fails
         nock(OLLAMA_HOST)
-          .post('/api/show', { name: 'llama3.2' })
+          .post('/api/show', { model: 'llama3.2' })
           .replyWithError('Server error');
 
         // Falls back to single call
@@ -1299,7 +1403,7 @@ describe('hubot-ollama', () => {
         process.env.HUBOT_OLLAMA_API_KEY = 'test-key';
 
         nock(OLLAMA_HOST)
-          .post('/api/show', { name: 'llama3.2' })
+          .post('/api/show', { model: 'llama3.2' })
           .reply(200, { capabilities: ['webSearch'] });
 
         // First query evaluates web support
@@ -1371,7 +1475,7 @@ describe('hubot-ollama', () => {
 
       // First call to ollama.show
       nock(OLLAMA_HOST)
-        .post('/api/show', { name: 'llama3.2' })
+        .post('/api/show', { model: 'llama3.2' })
         .reply(200, { capabilities: ['tools'] });
 
       // First request
@@ -1405,7 +1509,7 @@ describe('hubot-ollama', () => {
 
       // ollama.show fails
       nock(OLLAMA_HOST)
-        .post('/api/show', { name: 'llama3.2' })
+        .post('/api/show', { model: 'llama3.2' })
         .replyWithError('Connection failed');
 
       // Single call without tools
@@ -1422,6 +1526,43 @@ describe('hubot-ollama', () => {
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       expect(room.messages).toContainEqual(['hubot', 'Response without tools']);
+      delete process.env.HUBOT_OLLAMA_TOOLS_ENABLED;
+    });
+
+    it('re-probes after a transient detection failure once the cooldown elapses', async () => {
+      process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'true';
+
+      nock(OLLAMA_HOST)
+        .post('/api/show', { model: 'llama3.2' })
+        .replyWithError('Connection failed');
+      nock(OLLAMA_HOST)
+        .post('/api/chat')
+        .reply(200, { message: { role: 'assistant', content: 'Response 1' } });
+
+      room.user.say('alice', 'hubot ask first');
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      // Advance past the probe-failure retry cooldown
+      const realDateNow = Date.now;
+      vi.spyOn(Date, 'now').mockImplementation(() => realDateNow() + 6 * 60 * 1000);
+
+      nock(OLLAMA_HOST)
+        .post('/api/show', { model: 'llama3.2' })
+        .reply(200, { capabilities: ['tools'] });
+      nock(OLLAMA_HOST)
+        .post('/api/chat', (body) => {
+          expect(body.tools).toBeDefined();
+          return true;
+        })
+        .reply(200, { message: { role: 'assistant', content: 'Response 2' } });
+
+      room.user.say('alice', 'hubot ask second');
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(room.messages).toContainEqual(['hubot', 'Response 2']);
+      expect(nock.isDone()).toBe(true);
+
+      Date.now.mockRestore();
       delete process.env.HUBOT_OLLAMA_TOOLS_ENABLED;
     });
   });
@@ -1442,7 +1583,7 @@ describe('hubot-ollama', () => {
       process.env.HUBOT_OLLAMA_API_KEY = 'test-key';
 
       nock(OLLAMA_HOST)
-        .post('/api/show', { name: 'llama3.2' })
+        .post('/api/show', { model: 'llama3.2' })
         .reply(200, { capabilities: [] });
 
       // Should skip web evaluation and just respond
@@ -1462,7 +1603,7 @@ describe('hubot-ollama', () => {
       process.env.HUBOT_OLLAMA_API_KEY = 'test-key';
 
       nock(OLLAMA_HOST)
-        .post('/api/show', { name: 'llama3.2' })
+        .post('/api/show', { model: 'llama3.2' })
         .reply(200, { capabilities: ['webSearch', 'webFetch'] });
 
       // Web evaluation call

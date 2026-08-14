@@ -65,9 +65,49 @@ describe('JavaScript REPL Tool', () => {
       .rejects.toThrow('Script execution timed out');
   });
 
+  it('terminates the worker after a script that keeps rescheduling itself via microtasks, instead of leaving it running forever', async () => {
+    // vm's `timeout` option only bounds the script's initial synchronous
+    // execution. Code that reschedules itself via Promise.then() always
+    // returns synchronously right away (that's what makes this an escape:
+    // vm's timeout never even gets a chance to trigger), then keeps the
+    // worker's event loop spinning forever afterward — unless the worker
+    // itself gets torn down once we have our answer, which is what the
+    // external worker.terminate() call must guarantee regardless of what's
+    // still pending inside it.
+    const { Worker } = require('node:worker_threads');
+    const terminateSpy = vi.spyOn(Worker.prototype, 'terminate');
+
+    const result = await tool.handler({ code: 'function spin() { Promise.resolve().then(spin); } spin(); "ok"' });
+
+    expect(result).toBe('ok');
+    expect(terminateSpy).toHaveBeenCalled();
+  });
+
   it('should handle syntax errors gracefully', async () => {
     await expect(tool.handler({ code: 'this is not valid javascript' }))
       .rejects.toThrow();
+  });
+
+  it('should serialize circular references as [Circular] instead of throwing', async () => {
+    const result = await tool.handler({ code: 'const o = {}; o.self = o; o' });
+    expect(result).toBe('{"self":"[Circular]"}');
+  });
+
+  it('should serialize function-valued properties as [Function]', async () => {
+    const result = await tool.handler({ code: '({ fn: function() {}, value: 1 })' });
+    expect(result).toBe('{"fn":"[Function]","value":1}');
+  });
+
+  it('should truncate oversized object results at 2000 characters', async () => {
+    const result = await tool.handler({ code: '({ big: "x".repeat(3000) })' });
+    expect(result.length).toBe(2000 + '…[truncated]'.length);
+    expect(result.endsWith('…[truncated]')).toBe(true);
+  });
+
+  it('should truncate oversized string results at 2000 characters', async () => {
+    const result = await tool.handler({ code: '"x".repeat(3000)' });
+    expect(result.length).toBe(2000 + '…[truncated]'.length);
+    expect(result.endsWith('…[truncated]')).toBe(true);
   });
 
   it('should return string representation of results', async () => {

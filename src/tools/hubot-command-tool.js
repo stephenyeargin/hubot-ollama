@@ -46,6 +46,20 @@ const escapeRegex = (value) => String(value).replace(/[-[\]{}()*+?.,\\^$|#\s]/g,
 // created below, since the registry holds a single instance of it.
 const activeInvocations = new Set();
 
+// Serializes the section that swaps adapter.send/reply/emote so two concurrent
+// invocations (different users/rooms) can't interleave and leave mismatched
+// raw-method references installed — which would permanently misroute or drop
+// messages for the adapter's whole lifetime. Reentrant self-loops (same
+// room/user, or an indirect loop back into this tool) are rejected up front via
+// activeInvocations before ever reaching this lock, so queueing here can't
+// deadlock: nothing that's already holding the lock can also be waiting on it.
+let adapterLockChain = Promise.resolve();
+const withAdapterLock = (fn) => {
+  const run = adapterLockChain.catch(() => {}).then(fn);
+  adapterLockChain = run.catch(() => {});
+  return run;
+};
+
 // hubot ships ESM-only, so it must be loaded via dynamic import() from this
 // CJS file. Kick that off once, right here at module-eval time (i.e. as soon
 // as this file is require()d — before any test's fake timers are installed),
@@ -117,6 +131,19 @@ module.exports = (_ollama, _config, logger) => ({
       };
     }
 
+    // confirmed:true is only a model self-attestation — it can't be trusted once
+    // this interaction has already ingested external content (a web search/fetch
+    // result), since that content could have injected the "confirmation" itself
+    // rather than the actual human. Refuse regardless of what the model claims.
+    if (MUTATING_VERBS.test(withoutAddressing) && args && args._untrustedContentIngested) {
+      logger?.warn(`hubot_ollama_run_command: refusing possibly-mutating command "${commandText}" — untrusted web content was ingested earlier in this interaction`);
+      return {
+        error: 'This command appears to change data and was not run: this conversation already pulled in ' +
+          'external web content, so a confirmation cannot be trusted to have come from the user. Ask the user ' +
+          'to confirm again in a new message, without any web search/fetch tool calls in between.'
+      };
+    }
+
     const reentrancyKey = `${msg.message.user.room || 'unknown-room'}:${msg.message.user.id || msg.message.user.name || 'unknown-user'}`;
     if (activeInvocations.has(reentrancyKey)) {
       logger?.warn(`hubot_ollama_run_command: refusing reentrant invocation for key=${reentrancyKey} command="${commandText}"`);
@@ -127,64 +154,70 @@ module.exports = (_ollama, _config, logger) => ({
     const Hubot = await getHubotModule();
     const adapter = robot.adapter;
     const targetRoom = msg.message.user.room;
-    const captured = [];
-
-    const rawSend = adapter.send;
-    const rawReply = adapter.reply;
-    const rawEmote = adapter.emote;
-    const forwardSend = typeof rawSend === 'function' ? rawSend.bind(adapter) : null;
-
-    let settleResolve;
-    let settleTimer;
-    const settled = new Promise((resolve) => { settleResolve = resolve; });
-    const armSettleTimer = (ms) => {
-      clearTimeout(settleTimer);
-      settleTimer = setTimeout(() => settleResolve(), ms);
-    };
-
-    const capture = (envelope, ...strings) => {
-      const room = envelope && envelope.room;
-      if (room === targetRoom) {
-        captured.push(...strings);
-        armSettleTimer(SETTLE_GRACE_MS);
-      } else if (forwardSend) {
-        forwardSend(envelope, ...strings);
-      }
-    };
-
-    adapter.send = capture;
-    if (typeof rawReply === 'function') adapter.reply = capture;
-    if (typeof rawEmote === 'function') adapter.emote = capture;
-
-    logger?.info(`hubot_ollama_run_command: invoking "${commandText}" as user=${msg.message.user.name || msg.message.user.id}`);
-
-    let hardTimeoutId;
-    const hardTimeout = new Promise((_resolve, reject) => {
-      hardTimeoutId = setTimeout(() => reject(new Error('Command timed out')), LISTENER_TIMEOUT_MS);
-    });
 
     try {
-      const syntheticMessage = new Hubot.TextMessage(msg.message.user, commandText);
-      await Promise.race([robot.receive(syntheticMessage), hardTimeout]);
-      clearTimeout(hardTimeoutId);
+      return await withAdapterLock(async () => {
+        const captured = [];
 
-      // robot.receive() resolving only means the listener's own synchronous/awaited
-      // work is done — give it a chance to settle before deciding there's no response.
-      armSettleTimer(SETTLE_GRACE_MS);
-      await settled;
+        const rawSend = adapter.send;
+        const rawReply = adapter.reply;
+        const rawEmote = adapter.emote;
+        const forwardSend = typeof rawSend === 'function' ? rawSend.bind(adapter) : null;
+
+        let settleResolve;
+        let settleTimer;
+        const settled = new Promise((resolve) => { settleResolve = resolve; });
+        const armSettleTimer = (ms) => {
+          clearTimeout(settleTimer);
+          settleTimer = setTimeout(() => settleResolve(), ms);
+        };
+
+        const capture = (envelope, ...strings) => {
+          const room = envelope && envelope.room;
+          if (room === targetRoom) {
+            captured.push(...strings);
+            armSettleTimer(SETTLE_GRACE_MS);
+          } else if (forwardSend) {
+            forwardSend(envelope, ...strings);
+          }
+        };
+
+        adapter.send = capture;
+        if (typeof rawReply === 'function') adapter.reply = capture;
+        if (typeof rawEmote === 'function') adapter.emote = capture;
+
+        logger?.info(`hubot_ollama_run_command: invoking "${commandText}" as user=${msg.message.user.name || msg.message.user.id}`);
+
+        let hardTimeoutId;
+        const hardTimeout = new Promise((_resolve, reject) => {
+          hardTimeoutId = setTimeout(() => reject(new Error('Command timed out')), LISTENER_TIMEOUT_MS);
+        });
+
+        try {
+          const syntheticMessage = new Hubot.TextMessage(msg.message.user, commandText);
+          await Promise.race([robot.receive(syntheticMessage), hardTimeout]);
+          clearTimeout(hardTimeoutId);
+
+          // robot.receive() resolving only means the listener's own synchronous/awaited
+          // work is done — give it a chance to settle before deciding there's no response.
+          armSettleTimer(SETTLE_GRACE_MS);
+          await settled;
+        } finally {
+          clearTimeout(hardTimeoutId);
+          clearTimeout(settleTimer);
+          adapter.send = rawSend;
+          adapter.reply = rawReply;
+          adapter.emote = rawEmote;
+        }
+
+        if (captured.length === 0) {
+          return { command: commandText, response: null, message: 'No listener responded to this command.' };
+        }
+
+        return { command: commandText, response: captured.join('\n') };
+      });
     } finally {
-      clearTimeout(hardTimeoutId);
-      clearTimeout(settleTimer);
-      adapter.send = rawSend;
-      adapter.reply = rawReply;
-      adapter.emote = rawEmote;
       activeInvocations.delete(reentrancyKey);
     }
-
-    if (captured.length === 0) {
-      return { command: commandText, response: null, message: 'No listener responded to this command.' };
-    }
-
-    return { command: commandText, response: captured.join('\n') };
   }
 });

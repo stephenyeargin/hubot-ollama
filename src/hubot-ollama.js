@@ -21,6 +21,7 @@
 //   HUBOT_OLLAMA_AMBIENT_CONTEXT - Passively capture recent room messages as background context for answers (default: false)
 //   HUBOT_OLLAMA_AMBIENT_CONTEXT_SIZE - Number of recent ambient messages to retain per room (default: 10)
 //   HUBOT_OLLAMA_COMMAND_TOOL_ENABLED - Allow the LLM to invoke other Hubot commands on the user's behalf (default: false)
+//   HUBOT_OLLAMA_JS_REPL_ENABLED - Allow the LLM to execute JavaScript in a sandboxed REPL (default: false)
 //   HUBOT_OLLAMA_MEMORY_ENABLED - Allow the LLM to save/recall persistent memories via robot.brain (default: true)
 //   HUBOT_OLLAMA_MEMORY_MAX_ENTRIES - Max memory entries per context scope before least-recently-accessed eviction (default: 200)
 //   HUBOT_OLLAMA_MEMORY_MAX_CONTENT_CHARS - Max characters stored per memory entry (default: 4000)
@@ -45,39 +46,56 @@ const createMemoryTool = require('./tools/memory-tool');
 const createWebFetchTool = require('./tools/web-fetch-tool');
 const createWebSearchTool = require('./tools/web-search-tool');
 const { applyLoggerShims } = require('./utils/hubot-compat');
-const { getAdapterType, sanitizeText, sanitizeSlackBroadcasts, detectPromptInjection, getExistingSlackThread, getSlackThreadTs } = require('./utils/ollama-utils');
+const { getAdapterType, sanitizeText, sanitizeSlackBroadcasts, detectPromptInjection, getExistingSlackThread, getSlackThreadTs, raceAbort, truncate } = require('./utils/ollama-utils');
 const { convertToSlackFormat } = require('./utils/slack-formatter');
 
 module.exports = (robot) => {
   // Ensure logger compatibility for both old and new Hubot versions
   applyLoggerShims(robot.logger);
+
+  // Number.parseInt on a non-numeric env value returns NaN, which silently
+  // poisons any Math.max/min guard built on top of it (Math.max(1, NaN) is
+  // NaN, not 1) — so a typo'd env var doesn't fall back to the default, it
+  // disables the limit/timeout entirely. Validate and fall back explicitly.
+  const parseIntEnv = (envVar, defaultValue) => {
+    const raw = process.env[envVar];
+    if (raw === undefined || raw === '') return defaultValue;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) {
+      robot.logger.warn(`${envVar}="${raw}" is not a valid integer; using default ${defaultValue}`);
+      return defaultValue;
+    }
+    return parsed;
+  };
+
   const DEFAULT_MODEL = 'llama3.2';
   const RAW_MODEL = process.env.HUBOT_OLLAMA_MODEL || DEFAULT_MODEL;
   const MODEL_NAME_ALLOWED = /^[a-z0-9._:-]+$/i;
   const selectedModel = MODEL_NAME_ALLOWED.test(RAW_MODEL) ? RAW_MODEL : DEFAULT_MODEL;
 
-  const MAX_PROMPT_CHARS = Number.parseInt(process.env.HUBOT_OLLAMA_MAX_PROMPT_CHARS || '2000', 10);
-  const TIMEOUT_MS = Number.parseInt(process.env.HUBOT_OLLAMA_TIMEOUT_MS || '60000', 10);
-  const CONTEXT_TTL_MS = Number.parseInt(process.env.HUBOT_OLLAMA_CONTEXT_TTL_MS || '600000', 10); // 10 minutes default
-  const CONTEXT_TURNS = Math.max(1, Number.parseInt(process.env.HUBOT_OLLAMA_CONTEXT_TURNS || '5', 10));
+  const MAX_PROMPT_CHARS = parseIntEnv('HUBOT_OLLAMA_MAX_PROMPT_CHARS', 2000);
+  const TIMEOUT_MS = parseIntEnv('HUBOT_OLLAMA_TIMEOUT_MS', 60000);
+  const CONTEXT_TTL_MS = parseIntEnv('HUBOT_OLLAMA_CONTEXT_TTL_MS', 600000); // 10 minutes default
+  const CONTEXT_TURNS = Math.max(1, parseIntEnv('HUBOT_OLLAMA_CONTEXT_TURNS', 5));
   const KEEP_RAW_TURNS = 2; // Number of recent turns to keep verbatim (not configurable)
   const RAW_SCOPE = (process.env.HUBOT_OLLAMA_CONTEXT_SCOPE || 'room-user').toLowerCase();
   const CONTEXT_SCOPE = (['room', 'room-user', 'thread'].includes(RAW_SCOPE)) ? RAW_SCOPE : 'room-user';
   const TOOLS_ENABLED = /^1|true|yes$/i.test(process.env.HUBOT_OLLAMA_TOOLS_ENABLED || 'true');
   const WEB_ENABLED = /^1|true|yes$/i.test(process.env.HUBOT_OLLAMA_WEB_ENABLED || '');
   const HAS_WEB_API_KEY = Boolean(process.env.OLLAMA_API_KEY || process.env.HUBOT_OLLAMA_API_KEY);
-  const WEB_MAX_RESULTS = Math.min(10, Math.max(1, Number.parseInt(process.env.HUBOT_OLLAMA_WEB_MAX_RESULTS || '5', 10)));
-  const WEB_FETCH_CONCURRENCY = Math.max(1, Number.parseInt(process.env.HUBOT_OLLAMA_WEB_FETCH_CONCURRENCY || '3', 10));
-  const WEB_MAX_BYTES = Math.max(1024, Number.parseInt(process.env.HUBOT_OLLAMA_WEB_MAX_BYTES || '120000', 10));
-  const WEB_TIMEOUT_MS = Math.max(1000, Number.parseInt(process.env.HUBOT_OLLAMA_WEB_TIMEOUT_MS || '45000', 10));
+  const WEB_MAX_RESULTS = Math.min(10, Math.max(1, parseIntEnv('HUBOT_OLLAMA_WEB_MAX_RESULTS', 5)));
+  const WEB_FETCH_CONCURRENCY = Math.max(1, parseIntEnv('HUBOT_OLLAMA_WEB_FETCH_CONCURRENCY', 3));
+  const WEB_MAX_BYTES = Math.max(1024, parseIntEnv('HUBOT_OLLAMA_WEB_MAX_BYTES', 120000));
+  const WEB_TIMEOUT_MS = Math.max(1000, parseIntEnv('HUBOT_OLLAMA_WEB_TIMEOUT_MS', 45000));
   const RESPOND_TO_ADDRESSED_FALLBACK = /^(?:1|true|yes)$/i.test(process.env.HUBOT_OLLAMA_RESPOND_TO_ADDRESSED_FALLBACK || '');
   const AMBIENT_CONTEXT = /^(?:1|true|yes)$/i.test(process.env.HUBOT_OLLAMA_AMBIENT_CONTEXT || '');
-  const AMBIENT_CONTEXT_SIZE = Math.max(1, Number.parseInt(process.env.HUBOT_OLLAMA_AMBIENT_CONTEXT_SIZE || '10', 10));
+  const AMBIENT_CONTEXT_SIZE = Math.max(1, parseIntEnv('HUBOT_OLLAMA_AMBIENT_CONTEXT_SIZE', 10));
   const COMMAND_TOOL_ENABLED = /^(?:1|true|yes)$/i.test(process.env.HUBOT_OLLAMA_COMMAND_TOOL_ENABLED || '');
+  const JS_REPL_ENABLED = /^(?:1|true|yes)$/i.test(process.env.HUBOT_OLLAMA_JS_REPL_ENABLED || '');
   const MEMORY_ENABLED = /^(?:1|true|yes)$/i.test(process.env.HUBOT_OLLAMA_MEMORY_ENABLED || 'true');
-  const MEMORY_MAX_ENTRIES = Math.max(1, Number.parseInt(process.env.HUBOT_OLLAMA_MEMORY_MAX_ENTRIES || '200', 10));
-  const MEMORY_MAX_CONTENT_CHARS = Math.max(1, Number.parseInt(process.env.HUBOT_OLLAMA_MEMORY_MAX_CONTENT_CHARS || '4000', 10));
-  const MEMORY_MAX_SUMMARY_CHARS = Math.max(1, Number.parseInt(process.env.HUBOT_OLLAMA_MEMORY_MAX_SUMMARY_CHARS || '200', 10));
+  const MEMORY_MAX_ENTRIES = Math.max(1, parseIntEnv('HUBOT_OLLAMA_MEMORY_MAX_ENTRIES', 200));
+  const MEMORY_MAX_CONTENT_CHARS = Math.max(1, parseIntEnv('HUBOT_OLLAMA_MEMORY_MAX_CONTENT_CHARS', 4000));
+  const MEMORY_MAX_SUMMARY_CHARS = Math.max(1, parseIntEnv('HUBOT_OLLAMA_MEMORY_MAX_SUMMARY_CHARS', 200));
 
   // Emoji used with compatible adapters to indicate processing state
   const REQUEST_THINKING_EMOJI = 'thought_balloon';
@@ -87,17 +105,31 @@ module.exports = (robot) => {
   const adapterName = robot.adapterName ?? robot.adapter?.name;
 
   // In-memory ring buffer of recent undirected room messages, keyed by room ID.
-  // Not persisted — ambient context is intentionally ephemeral.
+  // Not persisted — ambient context is intentionally ephemeral. Each entry is
+  // capped in size, but the Map itself never shrinks on its own — a
+  // long-running bot that ambiently observes many distinct rooms would
+  // otherwise accumulate one entry per room forever. lastActive + an opportunistic
+  // sweep on every write bounds that without needing a background timer.
   const ambientBuffer = new Map();
+  const AMBIENT_ROOM_IDLE_MS = 24 * 60 * 60 * 1000; // prune a room's buffer after a day of inactivity
 
-  const pushAmbient = (roomId, userName, text) => {
-    if (!ambientBuffer.has(roomId)) ambientBuffer.set(roomId, []);
-    const buf = ambientBuffer.get(roomId);
-    buf.push({ userName, text });
-    if (buf.length > AMBIENT_CONTEXT_SIZE) buf.shift();
+  const pruneStaleAmbientRooms = () => {
+    const now = Date.now();
+    for (const [roomId, entry] of ambientBuffer) {
+      if (now - entry.lastActive > AMBIENT_ROOM_IDLE_MS) ambientBuffer.delete(roomId);
+    }
   };
 
-  const getAmbientMessages = (roomId) => ambientBuffer.get(roomId) || [];
+  const pushAmbient = (roomId, userName, text) => {
+    pruneStaleAmbientRooms();
+    if (!ambientBuffer.has(roomId)) ambientBuffer.set(roomId, { messages: [], lastActive: Date.now() });
+    const entry = ambientBuffer.get(roomId);
+    entry.messages.push({ userName, text });
+    if (entry.messages.length > AMBIENT_CONTEXT_SIZE) entry.messages.shift();
+    entry.lastActive = Date.now();
+  };
+
+  const getAmbientMessages = (roomId) => (ambientBuffer.get(roomId) || {}).messages || [];
 
   // Build the complete default system prompt
   const getDefaultInstructionPrompt = () => {
@@ -156,10 +188,14 @@ module.exports = (robot) => {
     host: process.env.HUBOT_OLLAMA_HOST || 'http://127.0.0.1:11434'
   };
 
-  // Add API key header if provided (for Ollama cloud)
-  if (process.env.HUBOT_OLLAMA_API_KEY) {
+  // Add API key header if provided (for Ollama cloud). HUBOT_OLLAMA_API_KEY is
+  // preferred; OLLAMA_API_KEY is accepted as a fallback since HAS_WEB_API_KEY
+  // above also honors it, and the underlying ollama SDK only auto-applies
+  // OLLAMA_API_KEY when the host is exactly https://ollama.com.
+  const apiKey = process.env.HUBOT_OLLAMA_API_KEY || process.env.OLLAMA_API_KEY;
+  if (apiKey) {
     ollamaConfig.headers = {
-      Authorization: `Bearer ${process.env.HUBOT_OLLAMA_API_KEY}`
+      Authorization: `Bearer ${apiKey}`
     };
   }
 
@@ -186,8 +222,9 @@ module.exports = (robot) => {
     robot.logger.debug('Registered Hubot command tool');
   }
 
-  // Register JavaScript REPL tool if tools are enabled
-  if (TOOLS_ENABLED) {
+  // Register JavaScript REPL tool if explicitly enabled (opt-in: lets the LLM
+  // execute arbitrary JS in a sandboxed vm, so it defaults to off)
+  if (TOOLS_ENABLED && JS_REPL_ENABLED) {
     const jsReplTool = createJavaScriptReplTool(ollama, {}, robot.logger);
     registry.registerTool(jsReplTool.name, {
       description: jsReplTool.description,
@@ -341,15 +378,14 @@ IMPORTANT: Keep the summary under 600 characters.`;
       const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
       try {
-        const response = await ollama.chat({
+        const response = await raceAbort(ollama.chat({
           model: selectedModel,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt }
           ],
-          stream: false,
-          signal: controller.signal
-        });
+          stream: false
+        }), controller.signal);
 
         clearTimeout(timeout);
 
@@ -364,13 +400,20 @@ IMPORTANT: Keep the summary under 600 characters.`;
         // Cap summary length as safety fallback (model should already respect 600-char limit)
         const cappedSummary = summary.length > 650 ? summary.slice(0, 600) + '...' : summary;
 
-        // Update context with summary and keep only recent turns
-        context.summary = cappedSummary;
-        context.history = remainingTurns;
-        context.summarizedUntil = Date.now();
-        context.lastUpdated = Date.now();
+        // Re-read the latest contexts map right before writing, and merge only
+        // this key's fields in — the read at the top of this function is now
+        // stale (we just awaited an LLM call), so writing that whole snapshot
+        // back would silently clobber any other room/user's writes that
+        // happened during the await.
+        const latestContexts = robot.brain.get('ollamaContexts') || {};
+        const latestContext = latestContexts[contextKey] || context;
+        latestContext.summary = cappedSummary;
+        latestContext.history = remainingTurns;
+        latestContext.summarizedUntil = Date.now();
+        latestContext.lastUpdated = Date.now();
+        latestContexts[contextKey] = latestContext;
 
-        robot.brain.set('ollamaContexts', contexts);
+        robot.brain.set('ollamaContexts', latestContexts);
         robot.logger.info(`Summarization complete for key=${contextKey}: summary=${cappedSummary.length} chars, kept ${remainingTurns.length} raw turns`);
       } catch (error) {
         clearTimeout(timeout);
@@ -673,14 +716,23 @@ IMPORTANT: Keep the summary under 600 characters.`;
 
   const clearThinkingStatus = async (msg) => setThinkingStatus(msg, '');
 
-  // Model tool support cache to avoid repeated probes
+  // Model tool support cache to avoid repeated probes. A successful probe is
+  // cached indefinitely (a model's declared capabilities don't change at
+  // runtime); a failed probe (e.g. transient network error) is only cached
+  // briefly so it gets retried instead of permanently disabling tools.
   let modelSupportsCached = null;
+  let modelSupportsCacheConfirmed = false;
+  let modelSupportsProbedAt = 0;
+  const PROBE_FAILURE_RETRY_MS = 5 * 60 * 1000;
 
   // Probe if the selected model supports tools via `ollama.show`
   const probeModelToolsSupport = async (modelName) => {
     if (modelSupportsCached !== null) {
-      robot.logger.debug(`Model tool support (cached) model=${modelName}: ${modelSupportsCached}`);
-      return modelSupportsCached;
+      const stillInCooldown = !modelSupportsCacheConfirmed && (Date.now() - modelSupportsProbedAt < PROBE_FAILURE_RETRY_MS);
+      if (modelSupportsCacheConfirmed || stillInCooldown) {
+        robot.logger.debug(`Model tool support (cached) model=${modelName}: ${modelSupportsCached}`);
+        return modelSupportsCached;
+      }
     }
 
     try {
@@ -689,11 +741,15 @@ IMPORTANT: Keep the summary under 600 characters.`;
       const capList = caps.map(String);
       const supportsTools = capList.some(c => /tools/i.test(c));
       modelSupportsCached = Boolean(supportsTools);
+      modelSupportsCacheConfirmed = true;
+      modelSupportsProbedAt = Date.now();
       robot.logger.debug(`Model tool support (probed) model=${modelName}: ${modelSupportsCached} caps=${capList.join(',')}`);
       return modelSupportsCached;
     } catch (err) {
       robot.logger.debug(`Model tool support probe failed for model=${modelName}: ${err && err.message}`);
       modelSupportsCached = false;
+      modelSupportsCacheConfirmed = false;
+      modelSupportsProbedAt = Date.now();
       return false;
     }
   };
@@ -780,7 +836,7 @@ IMPORTANT: Keep the summary under 600 characters.`;
 
     const makeFallbackResponse = async (logMessage) => {
       robot.logger.info(logMessage);
-      const fallbackResponse = await ollama.chat({ model: selectedModel, messages, stream: false });
+      const fallbackResponse = await raceAbort(ollama.chat({ model: selectedModel, messages, stream: false }), abortController.signal);
       accumulateTokens(fallbackResponse);
       clearTimeout(timeout);
       if (fallbackResponse.message && fallbackResponse.message.content) {
@@ -811,6 +867,17 @@ IMPORTANT: Keep the summary under 600 characters.`;
       hubot_ollama_web_search: 0,
       hubot_ollama_web_fetch: 0
     };
+
+    // Once any tool has pulled in external (attacker-influenceable) content —
+    // web search results or fetched page content — this interaction can no
+    // longer be trusted to carry a genuine user confirmation for a mutating
+    // hubot_ollama_run_command call: the model's next tool_calls turn could
+    // have been steered by injected instructions in that content rather than
+    // by the human. Passed through to tool handlers so hubot-command-tool.js
+    // can refuse confirmed:true once this flips true, regardless of what the
+    // model claims.
+    const UNTRUSTED_CONTENT_TOOLS = new Set(['hubot_ollama_web_search', 'hubot_ollama_web_fetch']);
+    let untrustedContentIngested = false;
 
     // Create a unique invocation ID for per-invocation URL tracking
     // This allows URLs to be re-fetched in follow-up questions, but prevents
@@ -897,7 +964,9 @@ IMPORTANT: Keep the summary under 600 characters.`;
         }
       }
 
-      robot.logger.debug(`Tool selected: ${toolName} with args: ${JSON.stringify(toolArgs)}`);
+      // Truncated: tool args can carry user-supplied content (memory entries,
+      // raw command text) that shouldn't be dumped into logs in full.
+      robot.logger.debug(`Tool selected: ${toolName} with args: ${truncate(JSON.stringify(toolArgs), 200)}`);
 
       if (toolCallLimits.hasOwnProperty(toolName) && toolCallCounts[toolName] >= toolCallLimits[toolName]) {
         robot.logger.warn(`Tool '${toolName}' call limit reached (${toolCallLimits[toolName]} calls max)`);
@@ -922,10 +991,11 @@ IMPORTANT: Keep the summary under 600 characters.`;
             toolReactionAdded = await addThinkingReaction(msg, TOOL_INVOKED_EMOJI);
           }
           const toolResults = await selectedTool.handler(
-            { ...toolArgs, _invocationContextKey: invocationContextKey },
+            { ...toolArgs, _invocationContextKey: invocationContextKey, _untrustedContentIngested: untrustedContentIngested },
             robot, msg
           );
-          robot.logger.debug(`Tool result: ${JSON.stringify(toolResults)}`);
+          if (UNTRUSTED_CONTENT_TOOLS.has(toolName)) untrustedContentIngested = true;
+          robot.logger.debug(`Tool result: ${truncate(JSON.stringify(toolResults) ?? 'undefined', 200)}`);
           return { toolName, toolResults, wasNameless, unrecoverable: false };
         } finally {
           // Restore/remove indicator asynchronously to avoid blocking critical path
@@ -968,12 +1038,12 @@ IMPORTANT: Keep the summary under 600 characters.`;
         // PHASE 1: First call to determine if tools are needed
         robot.logger.debug(`Making first LLM call to determine tool need. Available tools: ${toolsArray.map(t => t.function.name).join(', ') || 'none'}`);
 
-        const toolDecisionResponse = await ollama.chat({
+        const toolDecisionResponse = await raceAbort(ollama.chat({
           model: selectedModel,
           messages,
           stream: false,
           tools: toolsArray
-        });
+        }), abortController.signal);
         accumulateTokens(toolDecisionResponse);
 
         let toolResults = null;
@@ -1024,7 +1094,8 @@ IMPORTANT: Keep the summary under 600 characters.`;
               tool_calls: [toolCall]
             });
             messages.push({
-              role: 'user',
+              role: 'tool',
+              tool_name: toolName,
               content: formatToolResultContent(toolName, toolResults)
             });
             robot.logger.debug(`Tool phase complete. Making second call to incorporate results.`);
@@ -1058,7 +1129,7 @@ IMPORTANT: Keep the summary under 600 characters.`;
             tool_calls: toolCalls
           });
           for (const r of perCallResults) {
-            messages.push({ role: 'user', content: formatToolResultContent(r.toolName, r.toolResults) });
+            messages.push({ role: 'tool', tool_name: r.toolName, content: formatToolResultContent(r.toolName, r.toolResults) });
           }
 
           toolResults = perCallResults[0].toolResults; // marks phase 3 as active (non-null)
@@ -1097,12 +1168,12 @@ IMPORTANT: Keep the summary under 600 characters.`;
           // Loop to handle chained tool calls (model may need multiple tools)
           while (toolIterationCount < maxToolIterations) {
             toolIterationCount++;
-            currentResponse = await ollama.chat({
+            currentResponse = await raceAbort(ollama.chat({
               model: selectedModel,
               messages,
               stream: false,
               tools: toolsArray
-            });
+            }), abortController.signal);
             accumulateTokens(currentResponse);
 
             // Check if the response invoked another tool
@@ -1121,7 +1192,8 @@ IMPORTANT: Keep the summary under 600 characters.`;
                   tool_calls: [chainedToolCall]
                 });
                 messages.push({
-                  role: 'user',
+                  role: 'tool',
+                  tool_name: 'hubot_ollama_web_search',
                   content: formatToolResultContent('hubot_ollama_web_search', { error: 'Web search already performed earlier in this conversation' })
                 });
                 if (duplicateWebSearchSkips < MAX_DUPLICATE_WEB_SEARCH_SKIPS) {
@@ -1136,7 +1208,7 @@ IMPORTANT: Keep the summary under 600 characters.`;
               if (chainedResolved.unrecoverable) {
                 // Nameless with no recoverable hint — try a no-tool fallback before bailing
                 robot.logger.info('Chained tool call unrecoverable; making a fallback call without tools.');
-                const fallbackResponse = await ollama.chat({ model: selectedModel, messages, stream: false });
+                const fallbackResponse = await raceAbort(ollama.chat({ model: selectedModel, messages, stream: false }), abortController.signal);
                 accumulateTokens(fallbackResponse);
                 if (fallbackResponse.message && fallbackResponse.message.content) {
                   currentResponse = fallbackResponse;
@@ -1149,7 +1221,8 @@ IMPORTANT: Keep the summary under 600 characters.`;
                   tool_calls: [chainedToolCall]
                 });
                 messages.push({
-                  role: 'user',
+                  role: 'tool',
+                  tool_name: chainedResolved.toolName,
                   content: formatToolResultContent(chainedResolved.toolName, { error: 'Fallback call for nameless chained tool returned no content.' })
                 });
                 continue;
@@ -1202,7 +1275,8 @@ IMPORTANT: Keep the summary under 600 characters.`;
               if (chainedToolName === 'hubot_ollama_web_search') webSearchAlreadyPerformed = true;
 
               messages.push({
-                role: 'user',
+                role: 'tool',
+                tool_name: chainedToolName,
                 content: formatToolResultContent(chainedToolName, chainedToolResults)
               });
 
@@ -1270,7 +1344,7 @@ IMPORTANT: Keep the summary under 600 characters.`;
               if (perCallResults.some(r => r.toolName === 'hubot_ollama_web_search')) webSearchAlreadyPerformed = true;
 
               for (const r of perCallResults) {
-                messages.push({ role: 'user', content: formatToolResultContent(r.toolName, r.toolResults) });
+                messages.push({ role: 'tool', tool_name: r.toolName, content: formatToolResultContent(r.toolName, r.toolResults) });
               }
 
               continue;
@@ -1305,11 +1379,11 @@ IMPORTANT: Keep the summary under 600 characters.`;
         const reason = !TOOLS_ENABLED ? 'disabled' : !modelSupportsTools ? 'model lacks support' : 'no tools registered';
         robot.logger.debug(`Making single LLM call (tools ${reason})`);
 
-        const response = await ollama.chat({
+        const response = await raceAbort(ollama.chat({
           model: selectedModel,
           messages,
           stream: false
-        });
+        }), abortController.signal);
         accumulateTokens(response);
 
         clearTimeout(timeout);
