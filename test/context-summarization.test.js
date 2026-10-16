@@ -1,4 +1,4 @@
-const nock = require('nock');
+const nock = require('nock').default;
 
 const Helper = require('./helpers/hubot-helper');
 
@@ -38,7 +38,7 @@ describe('Context Summarization', () => {
   const mockSummarization = (options = {}) => {
     const interceptor = nock(OLLAMA_HOST)
       .post('/api/chat', (body) => /summarizing a chat conversation/.test(body.messages[0]?.content || ''));
-    if (options.delayMs) interceptor.delayConnection(options.delayMs);
+    if (options.delayMs) interceptor.delay(options.delayMs);
     if (options.error) {
       return interceptor.replyWithError(options.error);
     }

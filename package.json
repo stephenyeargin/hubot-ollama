@@ -38,7 +38,7 @@
     "hubot": "^14.1.0",
     "husky": "^9.1.7",
     "mock-require": "^3.0.3",
-    "nock": "^14.0.17",
+    "nock": "^15.0.1",
     "vitest": "^5.0.0"
   },
   "main": "index.js",

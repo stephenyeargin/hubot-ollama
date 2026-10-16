@@ -1,4 +1,4 @@
-const nock = require('nock');
+const nock = require('nock').default;
 
 const Helper = require('./helpers/hubot-helper');
 
