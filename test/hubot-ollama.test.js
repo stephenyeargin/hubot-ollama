@@ -1,4 +1,4 @@
-const nock = require('nock');
+const nock = require('nock').default;
 
 const registry = require('../src/tool-registry');
 
@@ -55,7 +55,7 @@ describe('hubot-ollama', () => {
       });
 
     if (options.timeout) {
-      scope.delayConnection(options.timeout);
+      scope.delay(options.timeout);
     }
 
     if (options.error) {

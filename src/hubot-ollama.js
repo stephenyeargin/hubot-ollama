@@ -1410,7 +1410,7 @@ IMPORTANT: Keep the summary under 600 characters.`;
       }
 
       // Check for connection errors
-      if (error.code === 'ECONNREFUSED') {
+      if (error.code === 'ECONNREFUSED' || error.cause?.code === 'ECONNREFUSED') {
         throw new Error('Cannot connect to Ollama server. Please ensure Ollama is running.');
       }
 

@@ -1,4 +1,4 @@
-const nock = require('nock');
+const nock = require('nock').default;
 
 const Helper = require('./helpers/hubot-helper');
 const { createMockTextMessage } = require('./helpers/mock-message');
@@ -47,7 +47,7 @@ describe('hubot-ollama slack', () => {
       });
 
     if (options.timeout) {
-      scope.delayConnection(options.timeout);
+      scope.delay(options.timeout);
     }
 
     if (options.error) {
