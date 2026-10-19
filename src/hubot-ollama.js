@@ -47,7 +47,7 @@ const createWebFetchTool = require('./tools/web-fetch-tool');
 const createWebSearchTool = require('./tools/web-search-tool');
 const { applyLoggerShims } = require('./utils/hubot-compat');
 const { getAdapterType, sanitizeText, sanitizeSlackBroadcasts, detectPromptInjection, getExistingSlackThread, getSlackThreadTs, raceAbort, truncate } = require('./utils/ollama-utils');
-const { convertToSlackFormat } = require('./utils/slack-formatter');
+const { convertToSlackFormat, convertToSlackBlocks } = require('./utils/slack-formatter');
 
 module.exports = (robot) => {
   // Ensure logger compatibility for both old and new Hubot versions
@@ -135,6 +135,9 @@ module.exports = (robot) => {
   const getDefaultInstructionPrompt = () => {
     // Core instructions
     let instructions = `You are a helpful chatbot for IRC/Slack-style chats. Keep responses under 512 characters. `;
+    if (getAdapterType(robot) === 'slack') {
+      instructions += 'Present tabular data as a markdown table; tables may exceed the length limit. ';
+    }
     if (TOOLS_ENABLED) {
       const tools = registry.getTools();
       instructions += "You MUST use any applicable tool from the list below:\n";
@@ -574,6 +577,13 @@ IMPORTANT: Keep the summary under 600 characters.`;
         text: slackText,
         mrkdwn: true,
       };
+
+      const blocks = convertToSlackBlocks(response);
+      if (blocks) {
+        formatted.blocks = blocks.map(block => (block.type === 'section'
+          ? { ...block, text: { ...block.text, text: sanitizeSlackBroadcasts(block.text.text) } }
+          : block));
+      }
 
       // Reply in the thread if the triggering message is already in one,
       // or start a new thread when CONTEXT_SCOPE is 'thread'.

@@ -94,6 +94,30 @@ describe('hubot-ollama slack', () => {
         expect(room.robot.logger.debug).toHaveBeenCalledWith('Calling Ollama API with model: llama3.2');
       });
     });
+
+    describe('response containing a markdown table', () => {
+      beforeEach(async () => {
+        mockOllamaChat('Scores:\n\n| Name | Score |\n|---|---|\n| Ann | 10 |');
+
+        room.user.say('alice', 'hubot ask show the scores');
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      });
+
+      it('sends a table block with text fallback', () => {
+        const [, payload] = room.messages[1];
+        expect(payload.text).toContain('```');
+        expect(payload.blocks).toEqual([
+          { type: 'section', text: { type: 'mrkdwn', text: 'Scores:' } },
+          {
+            type: 'table',
+            rows: [
+              [{ type: 'raw_text', text: 'Name' }, { type: 'raw_text', text: 'Score' }],
+              [{ type: 'raw_text', text: 'Ann' }, { type: 'raw_text', text: '10' }],
+            ],
+          },
+        ]);
+      });
+    });
   });
 
   describe('Slack Reaction Lifecycle', () => {

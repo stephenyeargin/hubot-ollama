@@ -4,6 +4,23 @@
 const AsciiTable = require('ascii-table');
 const { Marked } = require('marked');
 
+// Slack table block limits: https://docs.slack.dev/reference/block-kit/blocks/table-block/
+const TABLE_MAX_ROWS = 100;
+const TABLE_MAX_COLUMNS = 20;
+const TABLE_MAX_CHARS = 10000;
+const SECTION_MAX_CHARS = 3000;
+const MESSAGE_MAX_BLOCKS = 50;
+
+// Extract plain text from inline tokens (no formatting like bold/italic)
+const extractPlainText = (tokens) => tokens.map(token => {
+    if (token.type === 'text') {
+      return token.text;
+    } else if (token.tokens) {
+      return extractPlainText(token.tokens);
+    }
+    return token.raw || '';
+  }).join('');
+
 /**
  * Convert markdown text to Slack-compatible formatting
  * @param {string} markdown - The markdown text to convert
@@ -24,19 +41,6 @@ function convertToSlackFormat(markdown) {
 
     table({ header, rows }) {
       // Render markdown tables as ASCII inside a code block for Slack
-      // Extract plain text from tokens (no formatting like bold/italic)
-      const extractPlainText = (tokens) => tokens.map(token => {
-          if (token.type === 'text') {
-            return token.text;
-          } else if (token.type === 'strong' || token.type === 'em') {
-            // Recursively extract text from formatted tokens
-            return extractPlainText(token.tokens);
-          } else if (token.tokens) {
-            return extractPlainText(token.tokens);
-          }
-          return token.raw || '';
-        }).join('');
-
       const headerTexts = header.map(cell => extractPlainText(cell.tokens));
       const rowTexts = rows.map(row => row.map(cell => extractPlainText(cell.tokens)));
 
@@ -182,4 +186,97 @@ function convertToSlackFormat(markdown) {
   }
 }
 
-module.exports = { convertToSlackFormat };
+function toTableBlock({ header, rows, align }, maxChars) {
+  const textRows = [header, ...rows].map(row => row.map(cell => extractPlainText(cell.tokens)));
+  if (textRows.length > TABLE_MAX_ROWS || header.length > TABLE_MAX_COLUMNS) return null;
+  const chars = textRows.flat().join('').length;
+  if (chars > maxChars) return null;
+
+  const block = {
+    type: 'table',
+    rows: textRows.map(row => row.map(text => ({ type: 'raw_text', text }))),
+  };
+  if (align.some(Boolean)) {
+    block.column_settings = align.map(a => (a ? { align: a } : null));
+  }
+  return { block, chars };
+}
+
+// Splits text into chunks of at most `max` chars, closing and reopening code fences across chunks
+function chunkText(text, max) {
+  const chunks = [];
+  let rest = text;
+  let reopen = '';
+  while (reopen.length + rest.length > max) {
+    const budget = max - reopen.length - 4;
+    let cut = rest.lastIndexOf('\n', budget);
+    if (cut <= 0) cut = budget;
+    let chunk = reopen + rest.slice(0, cut);
+    rest = rest.slice(cut).replace(/^\n/, '');
+    const inFence = (chunk.match(/```/g) || []).length % 2 === 1;
+    if (inFence) chunk += '\n```';
+    reopen = inFence ? '```\n' : '';
+    chunks.push(chunk);
+  }
+  if (rest) chunks.push(reopen + rest);
+  return chunks;
+}
+
+/**
+ * Convert markdown containing tables into Slack Block Kit blocks, rendering each
+ * table as a native table block and surrounding content as mrkdwn sections.
+ * @param {string} markdown - The markdown text to convert
+ * @returns {Array|null} - Blocks, or null when there is no table to render natively
+ */
+function convertToSlackBlocks(markdown) {
+  if (!markdown || typeof markdown !== 'string') {
+    return null;
+  }
+
+  let tokens;
+  try {
+    tokens = new Marked({ gfm: true }).lexer(markdown);
+  } catch {
+    return null;
+  }
+
+  const blocks = [];
+  let pending = '';
+  let tableChars = 0;
+  // Sections are converted separately, so each needs the message's reference-link definitions
+  const refs = Object.entries(tokens.links || {})
+    .map(([label, { href, title }]) => `[${label}]: ${href}${title ? ` "${title}"` : ''}`)
+    .join('\n');
+
+  const flush = () => {
+    const text = pending.trim() ? convertToSlackFormat(refs ? `${pending}\n\n${refs}` : pending) : '';
+    pending = '';
+    if (!text) return;
+    chunkText(text, SECTION_MAX_CHARS).forEach((chunk) => {
+      blocks.push({ type: 'section', text: { type: 'mrkdwn', text: chunk } });
+    });
+  };
+
+  // Tables beyond Slack's limits (including the per-message cell character budget) stay ASCII
+  for (const token of tokens) {
+    if (token.type === 'hr') {
+      flush();
+      blocks.push({ type: 'divider' });
+      continue;
+    }
+    const table = token.type === 'table' ? toTableBlock(token, TABLE_MAX_CHARS - tableChars) : null;
+    if (table) {
+      flush();
+      blocks.push(table.block);
+      tableChars += table.chars;
+    } else {
+      pending += token.raw;
+    }
+  }
+  flush();
+
+  if (blocks.length > MESSAGE_MAX_BLOCKS) return null;
+  return blocks.some(b => b.type === 'table') ? blocks : null;
+}
+
+module.exports = { convertToSlackFormat, convertToSlackBlocks };
