@@ -9,6 +9,7 @@ const TABLE_MAX_ROWS = 100;
 const TABLE_MAX_COLUMNS = 20;
 const TABLE_MAX_CHARS = 10000;
 const SECTION_MAX_CHARS = 3000;
+const MESSAGE_MAX_BLOCKS = 50;
 
 // Extract plain text from inline tokens (no formatting like bold/italic)
 const extractPlainText = (tokens) => tokens.map(token => {
@@ -201,16 +202,23 @@ function toTableBlock({ header, rows, align }, maxChars) {
   return { block, chars };
 }
 
+// Splits text into chunks of at most `max` chars, closing and reopening code fences across chunks
 function chunkText(text, max) {
   const chunks = [];
   let rest = text;
-  while (rest.length > max) {
-    let cut = rest.lastIndexOf('\n', max);
-    if (cut <= 0) cut = max;
-    chunks.push(rest.slice(0, cut));
+  let reopen = '';
+  while (reopen.length + rest.length > max) {
+    const budget = max - reopen.length - 4;
+    let cut = rest.lastIndexOf('\n', budget);
+    if (cut <= 0) cut = budget;
+    let chunk = reopen + rest.slice(0, cut);
     rest = rest.slice(cut).replace(/^\n/, '');
+    const inFence = (chunk.match(/```/g) || []).length % 2 === 1;
+    if (inFence) chunk += '\n```';
+    reopen = inFence ? '```\n' : '';
+    chunks.push(chunk);
   }
-  if (rest) chunks.push(rest);
+  if (rest) chunks.push(reopen + rest);
   return chunks;
 }
 
@@ -235,9 +243,13 @@ function convertToSlackBlocks(markdown) {
   const blocks = [];
   let pending = '';
   let tableChars = 0;
+  // Sections are converted separately, so each needs the message's reference-link definitions
+  const refs = Object.entries(tokens.links || {})
+    .map(([label, { href, title }]) => `[${label}]: ${href}${title ? ` "${title}"` : ''}`)
+    .join('\n');
 
   const flush = () => {
-    const text = convertToSlackFormat(pending);
+    const text = pending.trim() ? convertToSlackFormat(refs ? `${pending}\n\n${refs}` : pending) : '';
     pending = '';
     if (!text) return;
     chunkText(text, SECTION_MAX_CHARS).forEach((chunk) => {
@@ -263,6 +275,7 @@ function convertToSlackBlocks(markdown) {
   }
   flush();
 
+  if (blocks.length > MESSAGE_MAX_BLOCKS) return null;
   return blocks.some(b => b.type === 'table') ? blocks : null;
 }
 

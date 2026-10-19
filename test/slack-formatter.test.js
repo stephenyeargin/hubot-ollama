@@ -202,7 +202,35 @@ function hello() {
       const big = `| A |\n|---|\n${Array.from({ length: 70 }, () => `| ${'x'.repeat(100)} |`).join('\n')}`;
       const blocks = convertToSlackBlocks(`${big}\n\n${big}`);
       expect(blocks.filter(b => b.type === 'table')).toHaveLength(1);
-      expect(blocks[1].text.text).toContain('```');
+      const sections = blocks.slice(1);
+      expect(sections.length).toBeGreaterThan(1);
+      sections.forEach((b) => {
+        expect(b.text.text.length).toBeLessThanOrEqual(3000);
+        expect(b.text.text.startsWith('```')).toBe(true);
+        expect(b.text.text.endsWith('```')).toBe(true);
+      });
+    });
+
+    it('should keep code fences balanced when splitting a long code block', () => {
+      const code = `\`\`\`\n${Array.from({ length: 200 }, (_, i) => `line ${i} ${'y'.repeat(30)}`).join('\n')}\n\`\`\``;
+      const blocks = convertToSlackBlocks(`${code}\n\n${table}`);
+      const sections = blocks.filter(b => b.type === 'section');
+      expect(sections.length).toBeGreaterThan(1);
+      sections.forEach((b) => {
+        expect(b.text.text.length).toBeLessThanOrEqual(3000);
+        expect((b.text.text.match(/```/g) || []).length % 2).toBe(0);
+      });
+    });
+
+    it('should resolve reference links defined outside the section', () => {
+      const blocks = convertToSlackBlocks(`See [docs][ref].\n\n${table}\n\n[ref]: https://example.com`);
+      expect(blocks[0].text.text).toBe('See <https://example.com|docs>.');
+      expect(blocks.map(b => b.type)).toEqual(['section', 'table']);
+    });
+
+    it('should return null when the message would exceed 50 blocks', () => {
+      const many = Array.from({ length: 26 }, (_, i) => `Text ${i}\n\n${table}`).join('\n\n');
+      expect(convertToSlackBlocks(many)).toBeNull();
     });
 
     it('should fall back to ASCII when a table exceeds Slack limits', () => {
