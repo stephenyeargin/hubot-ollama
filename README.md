@@ -150,6 +150,9 @@ When `HUBOT_OLLAMA_WEB_ENABLED=true` and the connected Ollama host supports web 
 - Search/fetch progress has no dedicated status message of its own — it's covered by the thinking indicator described below. Duplicate web searches/fetches within the same interaction are skipped.
 - If any URLs were fetched via `hubot_ollama_web_fetch` during the interaction, a single aggregated `🌐 Sources: ...` message is posted after the final answer (not while work is in progress), listing every URL fetched across the whole interaction — including across multiple searches/fetches — in one message.
 
+### Slack Tables
+When running with the Slack adapter, a markdown table in the model's reply is sent as a native Block Kit [table block](https://docs.slack.dev/reference/block-kit/blocks/table-block/), inline with the surrounding text. The plain-text `text` field still carries an ASCII rendering as the notification fallback. Tables beyond Slack's limits (100 rows, 20 columns, 10,000 cell characters across the whole message) stay as ASCII code blocks.
+
 ### Slack Reactions And Status
 When running with the Slack adapter, hubot-ollama uses reactions/status indicators on the triggering message:
 

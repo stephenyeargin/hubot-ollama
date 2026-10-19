@@ -118,7 +118,7 @@ Implementation and coverage: [src/hubot-ollama.js](src/hubot-ollama.js), [test/c
 - Tool-augmented reasoning: detect tool-capable models, run tool calls, then synthesize final answer.
 - Web retrieval: search then fetch content for grounding.
 - Deterministic JavaScript calculations/transforms via sandboxed REPL tool.
-- Output shaping: Slack-safe formatting and Hubot compatibility helpers.
+- Output shaping: Slack-safe formatting and Hubot compatibility helpers. In Slack, markdown tables in a reply are sent as Block Kit `table` blocks (`convertToSlackBlocks` in [src/utils/slack-formatter.js](src/utils/slack-formatter.js)) alongside the mrkdwn `text` fallback.
 - Deterministic tool selection via `tool-registry` patterns.
 
 ## Interaction Surfaces

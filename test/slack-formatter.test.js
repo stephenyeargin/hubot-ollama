@@ -1,4 +1,4 @@
-const { convertToSlackFormat } = require('../src/utils/slack-formatter');
+const { convertToSlackFormat, convertToSlackBlocks } = require('../src/utils/slack-formatter');
 
 describe('slack-formatter', () => {
   describe('convertToSlackFormat', () => {
@@ -151,6 +151,71 @@ function hello() {
       const result = convertToSlackFormat(input);
       // Should reduce to maximum 2 newlines
       expect(result).not.toContain('\n\n\n');
+    });
+  });
+
+  describe('convertToSlackBlocks', () => {
+    const table = `| Name | Score |
+|:-----|------:|
+| **Ann** | 10 |
+| Bob | 7 |`;
+
+    it('should return null when there is no table', () => {
+      expect(convertToSlackBlocks(null)).toBeNull();
+      expect(convertToSlackBlocks('Just **text**.')).toBeNull();
+    });
+
+    it('should render a table block inline between text sections', () => {
+      const blocks = convertToSlackBlocks(`Here are the **results**:\n\n${table}\n\nNice work.`);
+      expect(blocks).toEqual([
+        { type: 'section', text: { type: 'mrkdwn', text: 'Here are the *results*:' } },
+        {
+          type: 'table',
+          rows: [
+            [{ type: 'raw_text', text: 'Name' }, { type: 'raw_text', text: 'Score' }],
+            [{ type: 'raw_text', text: 'Ann' }, { type: 'raw_text', text: '10' }],
+            [{ type: 'raw_text', text: 'Bob' }, { type: 'raw_text', text: '7' }],
+          ],
+          column_settings: [{ align: 'left' }, { align: 'right' }],
+        },
+        { type: 'section', text: { type: 'mrkdwn', text: 'Nice work.' } },
+      ]);
+    });
+
+    it('should omit column_settings when no alignment is given', () => {
+      const blocks = convertToSlackBlocks('| A | B |\n|---|---|\n| 1 | 2 |');
+      expect(blocks).toHaveLength(1);
+      expect(blocks[0].column_settings).toBeUndefined();
+    });
+
+    it('should render multiple tables in order', () => {
+      const blocks = convertToSlackBlocks(`${table}\n\nBetween.\n\n${table}`);
+      expect(blocks.map(b => b.type)).toEqual(['table', 'section', 'table']);
+    });
+
+    it('should render horizontal rules as divider blocks', () => {
+      const blocks = convertToSlackBlocks(`Intro\n\n---\n\n${table}`);
+      expect(blocks.map(b => b.type)).toEqual(['section', 'divider', 'table']);
+    });
+
+    it('should render tables as ASCII once the per-message character budget is spent', () => {
+      const big = `| A |\n|---|\n${Array.from({ length: 70 }, () => `| ${'x'.repeat(100)} |`).join('\n')}`;
+      const blocks = convertToSlackBlocks(`${big}\n\n${big}`);
+      expect(blocks.filter(b => b.type === 'table')).toHaveLength(1);
+      expect(blocks[1].text.text).toContain('```');
+    });
+
+    it('should fall back to ASCII when a table exceeds Slack limits', () => {
+      const rows = Array.from({ length: 100 }, (_, i) => `| ${i} | x |`).join('\n');
+      expect(convertToSlackBlocks(`| A | B |\n|---|---|\n${rows}`)).toBeNull();
+    });
+
+    it('should split long text into multiple sections', () => {
+      const long = Array.from({ length: 100 }, () => 'x'.repeat(50)).join('\n\n');
+      const blocks = convertToSlackBlocks(`${long}\n\n${table}`);
+      const sections = blocks.filter(b => b.type === 'section');
+      expect(sections.length).toBeGreaterThan(1);
+      sections.forEach(b => expect(b.text.text.length).toBeLessThanOrEqual(3000));
     });
   });
 });
