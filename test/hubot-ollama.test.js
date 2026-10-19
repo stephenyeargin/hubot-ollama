@@ -81,7 +81,7 @@ describe('hubot-ollama', () => {
       beforeEach(async () => {
         mockOllamaChat('The capital of France is Paris.');
 
-        room.user.say('alice', 'hubot ask what is the capital of France?');
+        await room.user.say('alice', 'hubot ask what is the capital of France?');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -103,7 +103,7 @@ describe('hubot-ollama', () => {
 
     describe('ask hubot without a prompt', () => {
       beforeEach(async () => {
-        room.user.say('alice', 'hubot ask   ');
+        await room.user.say('alice', 'hubot ask   ');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -122,7 +122,7 @@ describe('hubot-ollama', () => {
     describe('alternative command aliases', () => {
       it('responds to ollama command', async () => {
         mockOllamaChat('Response using ollama command');
-        room.user.say('alice', 'hubot ollama: test prompt');
+        await room.user.say('alice', 'hubot ollama: test prompt');
         await new Promise((resolve) => setTimeout(resolve, 150));
         expect(room.messages).toEqual([
           ['alice', 'hubot ollama: test prompt'],
@@ -132,7 +132,7 @@ describe('hubot-ollama', () => {
 
       it('responds to llm command', async () => {
         mockOllamaChat('Response using llm command');
-        room.user.say('alice', 'hubot llm another test');
+        await room.user.say('alice', 'hubot llm another test');
         await new Promise((resolve) => setTimeout(resolve, 150));
         expect(room.messages).toEqual([
           ['alice', 'hubot llm another test'],
@@ -144,7 +144,7 @@ describe('hubot-ollama', () => {
 
   describe('Addressed Fallback Mode', () => {
     it('is disabled by default', async () => {
-      room.user.say('alice', 'hubot tell me a joke');
+      await room.user.say('alice', 'hubot tell me a joke');
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       expect(room.messages).toEqual([
@@ -162,7 +162,7 @@ describe('hubot-ollama', () => {
       });
 
       mockOllamaChat('Fallback response from addressed mode');
-      room.user.say('alice', 'hubot explain memoization');
+      await room.user.say('alice', 'hubot explain memoization');
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       expect(room.messages).toEqual([
@@ -181,7 +181,7 @@ describe('hubot-ollama', () => {
       room.robot.name = 'jarvis';
 
       mockOllamaChat('Renamed bot fallback response');
-      room.user.say('alice', 'jarvis summarize this quickly');
+      await room.user.say('alice', 'jarvis summarize this quickly');
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       expect(room.messages).toEqual([
@@ -198,7 +198,7 @@ describe('hubot-ollama', () => {
         room.robot.logger[method] = vi.fn();
       });
 
-      room.user.say('alice', '! explain memoization');
+      await room.user.say('alice', '! explain memoization');
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       expect(room.messages).toEqual([
@@ -217,7 +217,7 @@ describe('hubot-ollama', () => {
       room.robot.alias = '!';
 
       mockOllamaChat('Alias prefix fallback response');
-      room.user.say('alice', '! explain memoization');
+      await room.user.say('alice', '! explain memoization');
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       expect(room.messages).toEqual([
@@ -235,7 +235,7 @@ describe('hubot-ollama', () => {
       });
       room.robot.alias = '!';
 
-      room.user.say('alice', '! ping');
+      await room.user.say('alice', '! ping');
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       expect(room.messages).toEqual([
@@ -252,7 +252,7 @@ describe('hubot-ollama', () => {
         room.robot.logger[method] = vi.fn();
       });
 
-      room.user.say('alice', 'hubot nomatch');
+      await room.user.say('alice', 'hubot nomatch');
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       expect(room.messages).toEqual([
@@ -270,7 +270,7 @@ describe('hubot-ollama', () => {
       });
 
       mockOllamaChat('DM fallback response');
-      room.user.say('alice', createMockTextMessage('give me a short recap', {
+      await room.user.say('alice', createMockTextMessage('give me a short recap', {
         userName: 'alice',
         userId: 'U111',
         room: 'direct',
@@ -292,7 +292,7 @@ describe('hubot-ollama', () => {
         room.robot.logger[method] = vi.fn();
       });
 
-      room.user.say('alice', 'hubot explain cache invalidation');
+      await room.user.say('alice', 'hubot explain cache invalidation');
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       expect(room.messages).toEqual([
@@ -309,7 +309,7 @@ describe('hubot-ollama', () => {
         error.code = 'ECONNREFUSED';
         mockOllamaChat('', { error });
 
-        room.user.say('alice', 'hubot ask test question');
+        await room.user.say('alice', 'hubot ask test question');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -328,7 +328,7 @@ describe('hubot-ollama', () => {
           body: { error: 'model "llama3.2" not found' }
         });
 
-        room.user.say('alice', 'hubot ask test question');
+        await room.user.say('alice', 'hubot ask test question');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -345,7 +345,7 @@ describe('hubot-ollama', () => {
           body: { error: 'Internal server error' }
         });
 
-        room.user.say('alice', 'hubot ask test question');
+        await room.user.say('alice', 'hubot ask test question');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -358,7 +358,7 @@ describe('hubot-ollama', () => {
       beforeEach(async () => {
         mockOllamaChat('');
 
-        room.user.say('alice', 'hubot ask test question');
+        await room.user.say('alice', 'hubot ask test question');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -381,7 +381,7 @@ describe('hubot-ollama', () => {
         });
 
         mockOllamaChat('response', { timeout: 100 });
-        room.user.say('alice', 'hubot ask slow');
+        await room.user.say('alice', 'hubot ask slow');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -414,7 +414,7 @@ describe('hubot-ollama', () => {
             done: true
           });
 
-        room.user.say('alice', 'hubot ask test');
+        await room.user.say('alice', 'hubot ask test');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -433,7 +433,7 @@ describe('hubot-ollama', () => {
         });
 
         mockOllamaChat('ok');
-        room.user.say('alice', 'hubot ask test');
+        await room.user.say('alice', 'hubot ask test');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -470,7 +470,7 @@ describe('hubot-ollama', () => {
             done: true
           });
 
-        room.user.say('alice', 'hubot ask test');
+        await room.user.say('alice', 'hubot ask test');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -499,7 +499,7 @@ describe('hubot-ollama', () => {
             done: true
           });
 
-        room.user.say('alice', 'hubot ask hi');
+        await room.user.say('alice', 'hubot ask hi');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -524,7 +524,7 @@ describe('hubot-ollama', () => {
             done: true
           });
 
-        room.user.say('alice', 'hubot ask test');
+        await room.user.say('alice', 'hubot ask test');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -548,7 +548,7 @@ describe('hubot-ollama', () => {
       beforeEach(async () => {
         process.env.HUBOT_OLLAMA_MAX_PROMPT_CHARS = '2000';
         mockOllamaChat('ok');
-        room.user.say('alice', `hubot ask ${longText}`);
+        await room.user.say('alice', `hubot ask ${longText}`);
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -583,7 +583,7 @@ describe('hubot-ollama', () => {
             done: true
           });
 
-        room.user.say('alice', 'hubot ask test');
+        await room.user.say('alice', 'hubot ask test');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -618,7 +618,7 @@ describe('hubot-ollama', () => {
             done: true
           });
 
-        room.user.say('alice', 'hubot ask test cloud');
+        await room.user.say('alice', 'hubot ask test cloud');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -660,7 +660,7 @@ describe('hubot-ollama', () => {
             done: true
           });
 
-        room.user.say('alice', 'hubot ask test fallback key');
+        await room.user.say('alice', 'hubot ask test fallback key');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -710,7 +710,7 @@ describe('hubot-ollama', () => {
     describe('API-based approach security', () => {
       beforeEach(async () => {
         mockOllamaChat('Safe output');
-        room.user.say('alice', 'hubot ask tell me something; rm -rf / && `uname` $(whoami) | cat /etc/passwd');
+        await room.user.say('alice', 'hubot ask tell me something; rm -rf / && `uname` $(whoami) | cat /etc/passwd');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -734,7 +734,7 @@ describe('hubot-ollama', () => {
           });
 
         // Include various control characters
-        room.user.say('alice', 'hubot ask test\x00\x01\x02\x03prompt');
+        await room.user.say('alice', 'hubot ask test\x00\x01\x02\x03prompt');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -766,11 +766,11 @@ describe('hubot-ollama', () => {
           });
 
         // First user asks, stores context for alice
-        room.user.say('alice', 'hubot ask First question');
+        await room.user.say('alice', 'hubot ask First question');
         await new Promise((resolve) => setTimeout(resolve, 100));
 
         // Second user asks; in room-user scope, bob should NOT inherit alice context
-        room.user.say('bob', 'hubot ask Follow-up?');
+        await room.user.say('bob', 'hubot ask Follow-up?');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -808,11 +808,11 @@ describe('hubot-ollama', () => {
           });
 
         // Alice asks first question
-        room.user.say('alice', 'hubot ask First question');
+        await room.user.say('alice', 'hubot ask First question');
         await new Promise((resolve) => setTimeout(resolve, 100));
 
         // Bob asks follow-up; in room scope, Bob should inherit context
-        room.user.say('bob', 'hubot ask Follow-up?');
+        await room.user.say('bob', 'hubot ask Follow-up?');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -869,11 +869,11 @@ describe('hubot-ollama', () => {
           });
 
         // Simulate a threaded message
-        room.user.say('alice', 'hubot ask Thread question');
+        await room.user.say('alice', 'hubot ask Thread question');
         await new Promise((resolve) => setTimeout(resolve, 100));
 
         // Non-threaded message should not share context
-        room.user.say('alice', 'hubot ask Main question');
+        await room.user.say('alice', 'hubot ask Main question');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -914,13 +914,13 @@ describe('hubot-ollama', () => {
             done: true
           });
 
-        room.user.say('alice', 'hubot ask First');
+        await room.user.say('alice', 'hubot ask First');
         await new Promise((resolve) => setTimeout(resolve, 80));
 
         // Wait for context to expire
         await new Promise((resolve) => setTimeout(resolve, 150));
 
-        room.user.say('alice', 'hubot ask Second');
+        await room.user.say('alice', 'hubot ask Second');
         await new Promise((resolve) => setTimeout(resolve, 120));
       });
 
@@ -950,10 +950,10 @@ describe('hubot-ollama', () => {
             done: true
           });
 
-        room.user.say('alice', 'hubot ask First');
+        await room.user.say('alice', 'hubot ask First');
         await new Promise((resolve) => setTimeout(resolve, 80));
 
-        room.user.say('alice', 'hubot ask Second');
+        await room.user.say('alice', 'hubot ask Second');
         await new Promise((resolve) => setTimeout(resolve, 120));
       });
 
@@ -980,7 +980,7 @@ describe('hubot-ollama', () => {
 
         mockOllamaChat('ok');
 
-        room.user.say('alice', 'hubot ask test');
+        await room.user.say('alice', 'hubot ask test');
         await new Promise((resolve) => setTimeout(resolve, 150));
 
         // Manually verify the context storage logic by checking brain
@@ -1015,7 +1015,7 @@ describe('hubot-ollama', () => {
         user.id = 'U123456789';
         user.real_name = 'Alice';
 
-        room.user.say('alice', 'hubot ask what is this thread about?');
+        await room.user.say('alice', 'hubot ask what is this thread about?');
         await new Promise((resolve) => setTimeout(resolve, 150));
 
         // Check if response is formatted object with thread_ts
@@ -1043,7 +1043,7 @@ describe('hubot-ollama', () => {
       });
 
       it('responds in main channel when CONTEXT_SCOPE is not thread', async () => {
-        room.user.say('alice', 'hubot ask test question');
+        await room.user.say('alice', 'hubot ask test question');
         await new Promise((resolve) => setTimeout(resolve, 150));
 
         expect(room.messages).toEqual([
@@ -1088,11 +1088,11 @@ describe('hubot-ollama', () => {
           });
 
         // Alice asks a question
-        room.user.say('alice', 'hubot ask What is the capital of France?');
+        await room.user.say('alice', 'hubot ask What is the capital of France?');
         await new Promise((resolve) => setTimeout(resolve, 100));
 
         // Bob asks a follow-up question
-        room.user.say('bob', 'hubot ask What is its population?');
+        await room.user.say('bob', 'hubot ask What is its population?');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -1143,7 +1143,7 @@ describe('hubot-ollama', () => {
 
         mockOllamaChat('Answer');
 
-        room.user.say('alice', 'hubot ask test question');
+        await room.user.say('alice', 'hubot ask test question');
         await new Promise((resolve) => setTimeout(resolve, 150));
 
         const contexts = room.robot.brain.get('ollamaContexts');
@@ -1167,7 +1167,7 @@ describe('hubot-ollama', () => {
 
         // Message with minimal user info
         room.robot.brain.userForId('unknown', { name: 'unknown' });
-        room.user.say('unknown', 'hubot ask test');
+        await room.user.say('unknown', 'hubot ask test');
         await new Promise((resolve) => setTimeout(resolve, 150));
 
         // Should not crash and should complete successfully
@@ -1184,7 +1184,7 @@ describe('hubot-ollama', () => {
 
         mockOllamaChat('Answer');
 
-        room.user.say('alice', 'hubot ask test');
+        await room.user.say('alice', 'hubot ask test');
         await new Promise((resolve) => setTimeout(resolve, 150));
 
         const contexts = room.robot.brain.get('ollamaContexts');
@@ -1231,7 +1231,7 @@ describe('hubot-ollama', () => {
             }
           });
 
-        room.user.say('alice', 'hubot ask test');
+        await room.user.say('alice', 'hubot ask test');
         await new Promise((resolve) => setTimeout(resolve, 150));
 
         expect(room.messages).toContainEqual(['hubot', 'Single call response without tools.']);
@@ -1258,7 +1258,7 @@ describe('hubot-ollama', () => {
             }
           });
 
-        room.user.say('alice', 'hubot ask test');
+        await room.user.say('alice', 'hubot ask test');
         await new Promise((resolve) => setTimeout(resolve, 150));
 
         expect(room.messages).toContainEqual(['hubot', 'Response without tool support.']);
@@ -1282,7 +1282,7 @@ describe('hubot-ollama', () => {
             }
           });
 
-        room.user.say('alice', 'hubot ask what is 2+2?');
+        await room.user.say('alice', 'hubot ask what is 2+2?');
         await new Promise((resolve) => setTimeout(resolve, 150));
 
         expect(room.messages).toContainEqual(['hubot', 'The answer is simple.']);
@@ -1328,7 +1328,7 @@ describe('hubot-ollama', () => {
             }
           });
 
-        room.user.say('alice', 'hubot ask what time is it right now?');
+        await room.user.say('alice', 'hubot ask what time is it right now?');
         await new Promise((resolve) => setTimeout(resolve, 200));
 
         expect(room.messages.length).toBeGreaterThan(1);
@@ -1371,7 +1371,7 @@ describe('hubot-ollama', () => {
             }
           });
 
-        room.user.say('alice', 'hubot ask use unknown tool');
+        await room.user.say('alice', 'hubot ask use unknown tool');
         await new Promise((resolve) => setTimeout(resolve, 200));
 
         expect(room.messages.length).toBeGreaterThan(1);
@@ -1390,7 +1390,7 @@ describe('hubot-ollama', () => {
         // Falls back to single call
         mockOllamaChat('Response after probe failure');
 
-        room.user.say('alice', 'hubot ask test');
+        await room.user.say('alice', 'hubot ask test');
         await new Promise((resolve) => setTimeout(resolve, 150));
 
         expect(room.messages.length).toBeGreaterThan(1);
@@ -1418,7 +1418,7 @@ describe('hubot-ollama', () => {
 
         mockOllamaChat('First query response');
 
-        room.user.say('alice', 'hubot ask what is python');
+        await room.user.say('alice', 'hubot ask what is python');
         await new Promise((resolve) => setTimeout(resolve, 150));
 
         // Second query should reuse cache (only one /api/show call total)
@@ -1433,7 +1433,7 @@ describe('hubot-ollama', () => {
 
         mockOllamaChat('Second query response');
 
-        room.user.say('alice', 'hubot ask what is javascript');
+        await room.user.say('alice', 'hubot ask what is javascript');
         await new Promise((resolve) => setTimeout(resolve, 150));
 
         expect(room.messages.length).toBeGreaterThan(2);
@@ -1462,7 +1462,7 @@ describe('hubot-ollama', () => {
           }
         });
 
-      room.user.say('alice', 'hubot ask test');
+      await room.user.say('alice', 'hubot ask test');
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       delete process.env.HUBOT_OLLAMA_SYSTEM_PROMPT;
@@ -1485,7 +1485,7 @@ describe('hubot-ollama', () => {
           message: { role: 'assistant', content: 'Response 1' }
         });
 
-      room.user.say('alice', 'hubot ask first');
+      await room.user.say('alice', 'hubot ask first');
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       // Second request should NOT call ollama.show again (uses cache)
@@ -1495,7 +1495,7 @@ describe('hubot-ollama', () => {
           message: { role: 'assistant', content: 'Response 2' }
         });
 
-      room.user.say('alice', 'hubot ask second');
+      await room.user.say('alice', 'hubot ask second');
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       // Verify response was returned
@@ -1522,7 +1522,7 @@ describe('hubot-ollama', () => {
           message: { role: 'assistant', content: 'Response without tools' }
         });
 
-      room.user.say('alice', 'hubot ask test');
+      await room.user.say('alice', 'hubot ask test');
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       expect(room.messages).toContainEqual(['hubot', 'Response without tools']);
@@ -1539,7 +1539,7 @@ describe('hubot-ollama', () => {
         .post('/api/chat')
         .reply(200, { message: { role: 'assistant', content: 'Response 1' } });
 
-      room.user.say('alice', 'hubot ask first');
+      await room.user.say('alice', 'hubot ask first');
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       // Advance past the probe-failure retry cooldown
@@ -1556,7 +1556,7 @@ describe('hubot-ollama', () => {
         })
         .reply(200, { message: { role: 'assistant', content: 'Response 2' } });
 
-      room.user.say('alice', 'hubot ask second');
+      await room.user.say('alice', 'hubot ask second');
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       expect(room.messages).toContainEqual(['hubot', 'Response 2']);
@@ -1589,7 +1589,7 @@ describe('hubot-ollama', () => {
       // Should skip web evaluation and just respond
       mockOllamaChat('Direct response without web search');
 
-      room.user.say('alice', 'hubot ask what are latest events');
+      await room.user.say('alice', 'hubot ask what are latest events');
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       expect(room.messages).toContainEqual(['hubot', 'Direct response without web search']);
@@ -1624,7 +1624,7 @@ describe('hubot-ollama', () => {
       // Main query call
       mockOllamaChat('Continuing without web results');
 
-      room.user.say('alice', 'hubot ask what are latest tech trends?');
+      await room.user.say('alice', 'hubot ask what are latest tech trends?');
       await new Promise((resolve) => setTimeout(resolve, 200));
 
       // Should still respond even though web search failed

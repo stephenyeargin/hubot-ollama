@@ -56,7 +56,7 @@ describe('Context Summarization', () => {
   const drive4Turns = async () => {
     for (let i = 1; i <= 4; i++) {
       mockAsk(`Reply ${i}`);
-      room.user.say('alice', `hubot ask question ${i}`);
+      await room.user.say('alice', `hubot ask question ${i}`);
       await new Promise((resolve) => setTimeout(resolve, 120));
     }
   };
@@ -97,7 +97,7 @@ describe('Context Summarization', () => {
 
     for (let i = 5; i <= 6; i++) {
       mockAsk(`Reply ${i}`);
-      room.user.say('alice', `hubot ask question ${i}`);
+      await room.user.say('alice', `hubot ask question ${i}`);
       await new Promise((resolve) => setTimeout(resolve, 120));
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
@@ -160,12 +160,12 @@ describe('Context Summarization', () => {
     // room-user context key) write a turn while it's still in flight.
     for (let i = 1; i <= 4; i++) {
       mockAsk(`Reply ${i}`);
-      room.user.say('alice', `hubot ask question ${i}`);
+      await room.user.say('alice', `hubot ask question ${i}`);
       await new Promise((resolve) => setTimeout(resolve, 120));
     }
 
     mockAsk('Bob reply');
-    room.user.say('bob', 'hubot ask bob question');
+    await room.user.say('bob', 'hubot ask bob question');
     await new Promise((resolve) => setTimeout(resolve, 250));
 
     const contexts = room.robot.brain.get('ollamaContexts');
@@ -182,7 +182,7 @@ describe('Context Summarization', () => {
 
     for (let i = 1; i <= 3; i++) {
       mockAsk(`Reply ${i}`);
-      room.user.say('alice', `hubot ask question ${i}`);
+      await room.user.say('alice', `hubot ask question ${i}`);
       await new Promise((resolve) => setTimeout(resolve, 120));
     }
 
@@ -191,11 +191,11 @@ describe('Context Summarization', () => {
     // while the 4th turn's summarizeContext() is still awaiting its
     // deliberately slow (150ms) summarization response.
     mockAsk('Reply 4');
-    room.user.say('alice', 'hubot ask question 4');
+    await room.user.say('alice', 'hubot ask question 4');
     await new Promise((resolve) => setTimeout(resolve, 40));
 
     mockAsk('Reply 5');
-    room.user.say('alice', 'hubot ask question 5');
+    await room.user.say('alice', 'hubot ask question 5');
     await new Promise((resolve) => setTimeout(resolve, 300));
 
     // Exactly one summarization HTTP call was made — the 5th turn's

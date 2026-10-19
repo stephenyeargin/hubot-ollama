@@ -72,7 +72,7 @@ describe('hubot-ollama slack', () => {
       beforeEach(async () => {
         mockOllamaChat('The capital of France is **Paris**.');
 
-        room.user.say('alice', 'hubot ask what is the capital of France?');
+        await room.user.say('alice', 'hubot ask what is the capital of France?');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
@@ -99,7 +99,7 @@ describe('hubot-ollama slack', () => {
       beforeEach(async () => {
         mockOllamaChat('Scores:\n\n| Name | Score |\n|---|---|\n| Ann | 10 |');
 
-        room.user.say('alice', 'hubot ask show the scores');
+        await room.user.say('alice', 'hubot ask show the scores');
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
 
