@@ -29,6 +29,7 @@
 //
 // Commands:
 //   hubot ask <prompt> - Ask Ollama a question
+//   hubot ollama usage [24h|7d|30d] - Show remaining Ollama cloud credit and recent usage
 //
 
 /** @typedef {import('ollama').Message} OllamaMessage */
@@ -39,14 +40,16 @@
 const { Ollama } = require('ollama');
 
 const registry = require('./tool-registry');
+const createCloudUsageTool = require('./tools/cloud-usage-tool');
 const createHubotCommandTool = require('./tools/hubot-command-tool');
 const createHubotHelpTool = require('./tools/hubot-help-tool');
 const createJavaScriptReplTool = require('./tools/javascript-repl-tool');
 const createMemoryTool = require('./tools/memory-tool');
+const { fetchCloudUsage } = require('./tools/ollama-client');
 const createWebFetchTool = require('./tools/web-fetch-tool');
 const createWebSearchTool = require('./tools/web-search-tool');
 const { applyLoggerShims } = require('./utils/hubot-compat');
-const { getAdapterType, sanitizeText, sanitizeSlackBroadcasts, detectPromptInjection, getExistingSlackThread, getSlackThreadTs, raceAbort, truncate } = require('./utils/ollama-utils');
+const { formatCloudUsage, getAdapterType, sanitizeText, sanitizeSlackBroadcasts, detectPromptInjection, getExistingSlackThread, getSlackThreadTs, raceAbort, truncate } = require('./utils/ollama-utils');
 const { convertToSlackFormat, convertToSlackBlocks } = require('./utils/slack-formatter');
 
 module.exports = (robot) => {
@@ -204,6 +207,52 @@ module.exports = (robot) => {
 
   const ollama = new Ollama(ollamaConfig);
 
+  // Cloud credit is only consumed by ollama.com inference (cloud host or a
+  // `:cloud`/`-cloud` model proxied through a local server) and by web
+  // search/fetch. Purely local setups cost nothing, so usage stays off.
+  const IS_CLOUD_HOST = (() => {
+    try {
+      return new URL(ollamaConfig.host).hostname === 'ollama.com';
+    } catch {
+      return false;
+    }
+  })();
+  const IS_CLOUD_MODEL = /[:-]cloud$/i.test(selectedModel);
+  const USES_CLOUD_WEB = WEB_ENABLED && HAS_WEB_API_KEY && TOOLS_ENABLED;
+  const USAGE_ENABLED = Boolean(apiKey) && (IS_CLOUD_HOST || IS_CLOUD_MODEL || USES_CLOUD_WEB);
+
+  // /api/balance and /api/usage share a 10 req/min per-account limit, so
+  // results are cached per range and concurrent callers share one request.
+  const USAGE_CACHE_MS = 60000;
+  const usageCache = new Map();
+  // The rate limit is account-wide, so a 429 backs off every range, not just
+  // the one that tripped it.
+  let usageRetryUntil = 0;
+  const getCloudUsage = (range = '7d') => {
+    const cached = usageCache.get(range);
+    if (cached && cached.promise) return cached.promise;
+    if (cached && Date.now() < cached.expires) return Promise.resolve(cached.value);
+    if (Date.now() < usageRetryUntil) {
+      if (cached) return Promise.resolve(cached.value);
+      const err = Object.assign(new Error('Ollama cloud usage is rate limited; try again shortly'), { status: 429 });
+      return Promise.resolve({ balance: null, balanceError: err, usage: null, usageError: err });
+    }
+    const promise = fetchCloudUsage(apiKey, { range, timeoutMs: Math.min(TIMEOUT_MS, 15000) }).then((value) => {
+      const errors = [value.balanceError, value.usageError].filter(Boolean);
+      errors.forEach((err) => robot.logger.error(`Ollama cloud usage request failed: ${err.message}`));
+      const rateLimit = errors.find((err) => err.status === 429);
+      if (rateLimit) usageRetryUntil = Date.now() + rateLimit.retryAfterSec * 1000;
+      const result = rateLimit && cached ? cached.value : value;
+      usageCache.set(range, { value: result, expires: Date.now() + USAGE_CACHE_MS });
+      return result;
+    }, (err) => {
+      usageCache.delete(range);
+      throw err;
+    });
+    usageCache.set(range, { ...cached, promise });
+    return promise;
+  };
+
   // Register help tool (always available — no feature gate required)
   const hubotHelpTool = createHubotHelpTool(null, {}, robot.logger);
   registry.registerTool(hubotHelpTool.name, {
@@ -266,6 +315,16 @@ module.exports = (robot) => {
     if (!HAS_WEB_API_KEY) reasons.push('no API key');
     if (!TOOLS_ENABLED) reasons.push('tools disabled');
     robot.logger.debug(`Skipping web tool registration: ${reasons.join(', ')}`);
+  }
+
+  if (TOOLS_ENABLED && USAGE_ENABLED) {
+    const cloudUsageTool = createCloudUsageTool(null, { getCloudUsage }, robot.logger);
+    registry.registerTool(cloudUsageTool.name, {
+      description: cloudUsageTool.description,
+      parameters: cloudUsageTool.parameters,
+      handler: cloudUsageTool.handler
+    });
+    robot.logger.debug('Registered cloud usage tool');
   }
 
   // Initialize conversation context storage in robot.brain
@@ -1557,9 +1616,31 @@ IMPORTANT: Keep the summary under 600 characters.`;
     });
   }
 
+  const handleUsageCommand = async (range, msg) => {
+    if (!USAGE_ENABLED) {
+      const reason = apiKey
+        ? 'This bot only runs local models, so no Ollama cloud credit is being used.'
+        : 'No Ollama API key is configured, so cloud usage is unavailable.';
+      msg.send(formatResponse(reason, msg));
+      return;
+    }
+    try {
+      const result = await getCloudUsage(range);
+      msg.send(formatResponse(formatCloudUsage(result), msg));
+    } catch (err) {
+      robot.logger.error(`Ollama cloud usage command failed: ${err.message}`);
+      msg.send(formatResponse('Unable to retrieve Ollama cloud usage right now.', msg));
+    }
+  };
+
   // Main command handler
   robot.respond(/(?:ask|ollama|llm):?\s+(.+)/i, async (msg) => {
     const userPrompt = msg.match[1];
+    const usageMatch = userPrompt.trim().match(/^(?:usage|balance)(?:\s+(24h|7d|30d))?$/i);
+    if (usageMatch) {
+      await handleUsageCommand((usageMatch[1] || '7d').toLowerCase(), msg);
+      return;
+    }
     robot.logger.debug(`User prompt: ${userPrompt}`);
     await handlePrompt(userPrompt, msg);
   });

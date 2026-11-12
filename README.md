@@ -37,6 +37,7 @@
 | `hubot ask <prompt>` | `hubot ask what is caching?` | Primary documented command |
 | `hubot ollama <prompt>` | `hubot ollama summarize HTTP` | Alias |
 | `hubot llm <prompt>` | `hubot llm list json benefits` | Alias |
+| `hubot ollama usage [24h\|7d\|30d]` | `hubot ollama usage 30d` | Remaining Ollama cloud credit and recent spend (also `balance`); see [Cloud Usage](#cloud-usage) |
 
 Prompts are sanitized and truncated if they exceed the configured limit.
 
@@ -336,6 +337,17 @@ Hubot-Ollama works with [any model supported by Ollama](https://ollama.com/searc
 Both local and cloud models share the same API, making the integration seamless regardless of where your model runs.
 
 **Note:** Cloud models require network connectivity and count against your cloud usage. Local models remain free and private.
+
+### Cloud Usage
+
+Ollama cloud credit is consumed by cloud models (either `HUBOT_OLLAMA_HOST=https://ollama.com` or a `:cloud`/`-cloud` model proxied through a local server) and by web search/fetch. Local models consume nothing.
+
+When an API key is set and one of those is in use, the bot can report the account's remaining credit and recent usage from Ollama's [balance](https://docs.ollama.com/api/balance) and [usage](https://docs.ollama.com/api/cloud-usage) endpoints:
+
+- `hubot ollama usage [24h|7d|30d]` replies directly, without calling the model.
+- The `hubot_ollama_cloud_usage` tool lets the model answer questions like "how much Ollama credit is left?"
+
+No extra configuration is needed. Results are cached for 60 seconds because these endpoints are limited to 10 requests per minute per account.
 
 ## Error Handling
 | Situation | User Message |
