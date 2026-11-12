@@ -91,6 +91,14 @@ describe('formatCloudUsage', () => {
     expect(text).toContain('*Usage (7d):* 15 requests, $0.02, 106,000 input tokens, 13,600 output tokens');
   });
 
+  test('omits included credit when the plan has no allowance', () => {
+    const text = formatCloudUsage({
+      balance: { included: { balance_usd: 0, allowance_usd: 0, period: { until: '2026-12-11T18:19:00Z' } }, purchased: { balance_usd: 4.99 } },
+      usage: null
+    });
+    expect(text).toBe('*Purchased credit:* $4.99');
+  });
+
   test('formats legacy session/weekly limits', () => {
     const text = formatCloudUsage({ balance: LEGACY_BALANCE, usage: null });
     expect(text).toContain('*Session limit:* 75% remaining, resets 2026-10-01 07:00 UTC');
@@ -180,6 +188,20 @@ describe('hubot ollama usage command', () => {
     await say('hubot ollama usage 30d');
     expect(room.messages[3][1]).toBe(room.messages[1][1]);
     expect(registry.getTools()['hubot_ollama_cloud_usage']).toBeDefined();
+  });
+
+  test('429 backs off other ranges until Retry-After passes', async () => {
+    await createRoom({ HUBOT_OLLAMA_API_KEY: 'test-key', HUBOT_OLLAMA_HOST: 'https://ollama.com' });
+    nock(CLOUD).get('/api/balance').reply(429, { error: 'too many requests' }, { 'Retry-After': '120' });
+    nock(CLOUD).get('/api/usage').query({ range: '7d' }).reply(429, { error: 'too many requests' }, { 'Retry-After': '120' });
+    await say('hubot ollama usage');
+    expect(room.messages[1][1]).toBe('Ollama cloud usage is unavailable right now.');
+
+    const extra = mockCloud({ range: '30d' });
+    await say('hubot ollama usage 30d');
+    expect(room.messages[3][1]).toBe('Ollama cloud usage is unavailable right now.');
+    expect(extra.balanceScope.isDone()).toBe(false);
+    expect(extra.usageScope.isDone()).toBe(false);
   });
 
   test('cloud model on a local host registers the tool', async () => {

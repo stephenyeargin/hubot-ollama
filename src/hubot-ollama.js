@@ -225,18 +225,25 @@ module.exports = (robot) => {
   // results are cached per range and concurrent callers share one request.
   const USAGE_CACHE_MS = 60000;
   const usageCache = new Map();
+  // The rate limit is account-wide, so a 429 backs off every range, not just
+  // the one that tripped it.
+  let usageRetryUntil = 0;
   const getCloudUsage = (range = '7d') => {
     const cached = usageCache.get(range);
-    if (cached && (cached.promise || Date.now() < cached.expires)) {
-      return cached.promise || Promise.resolve(cached.value);
+    if (cached && cached.promise) return cached.promise;
+    if (cached && Date.now() < cached.expires) return Promise.resolve(cached.value);
+    if (Date.now() < usageRetryUntil) {
+      if (cached) return Promise.resolve(cached.value);
+      const err = Object.assign(new Error('Ollama cloud usage is rate limited; try again shortly'), { status: 429 });
+      return Promise.resolve({ balance: null, balanceError: err, usage: null, usageError: err });
     }
     const promise = fetchCloudUsage(apiKey, { range, timeoutMs: Math.min(TIMEOUT_MS, 15000) }).then((value) => {
       const errors = [value.balanceError, value.usageError].filter(Boolean);
       errors.forEach((err) => robot.logger.error(`Ollama cloud usage request failed: ${err.message}`));
       const rateLimit = errors.find((err) => err.status === 429);
-      const ttl = rateLimit ? Math.max(USAGE_CACHE_MS, rateLimit.retryAfterSec * 1000) : USAGE_CACHE_MS;
+      if (rateLimit) usageRetryUntil = Date.now() + rateLimit.retryAfterSec * 1000;
       const result = rateLimit && cached ? cached.value : value;
-      usageCache.set(range, { value: result, expires: Date.now() + ttl });
+      usageCache.set(range, { value: result, expires: Date.now() + USAGE_CACHE_MS });
       return result;
     }, (err) => {
       usageCache.delete(range);

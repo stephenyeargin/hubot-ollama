@@ -177,10 +177,10 @@ function formatCloudUsage({ balance, usage } = {}) {
   const included = balance && balance.included;
 
   if (included && typeof included.balance_usd === 'number') {
-    const pct = included.allowance_usd > 0
-      ? ` (${Math.round((included.balance_usd / included.allowance_usd) * 100)}% left)`
-      : '';
-    lines.push(`*Included credit:* ${formatUsd(included.balance_usd)} of ${formatUsd(included.allowance_usd)}${pct}, resets ${formatDate(included.period && included.period.until)}`);
+    if (included.allowance_usd > 0) {
+      const pct = Math.round((included.balance_usd / included.allowance_usd) * 100);
+      lines.push(`*Included credit:* ${formatUsd(included.balance_usd)} of ${formatUsd(included.allowance_usd)} (${pct}% left), resets ${formatDate(included.period && included.period.until)}`);
+    }
   } else if (included && (included.session || included.weekly)) {
     for (const [label, limit] of [['Session', included.session], ['Weekly', included.weekly]]) {
       if (limit) lines.push(`*${label} limit:* ${limit.remaining_percent}% remaining, resets ${formatDate(limit.resets_at)}`);
