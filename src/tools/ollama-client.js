@@ -56,7 +56,54 @@ function buildWebContextMessage(pages, maxTextLen = 800) {
   return lines.join('\n\n');
 }
 
+const OLLAMA_CLOUD_URL = 'https://ollama.com';
+
+// Native fetch honors `signal`, unlike the ollama SDK's non-streaming calls,
+// so a plain AbortController timeout is enough here (no raceAbort needed).
+async function fetchCloudJson(path, apiKey, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${OLLAMA_CLOUD_URL}${path}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: controller.signal
+    });
+    if (!res.ok) {
+      let detail = '';
+      try {
+        detail = (await res.json()).error || '';
+      } catch {
+        // non-JSON error body
+      }
+      const err = new Error(`Ollama cloud ${path} returned ${res.status}${detail ? `: ${detail}` : ''}`);
+      err.status = res.status;
+      if (res.status === 429) {
+        const retryAfter = Number.parseInt(res.headers.get('retry-after'), 10);
+        err.retryAfterSec = Number.isFinite(retryAfter) ? retryAfter : 60;
+      }
+      throw err;
+    }
+    return await res.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchCloudUsage(apiKey, { range = '7d', timeoutMs = 10000 } = {}) {
+  const [balance, usage] = await Promise.allSettled([
+    fetchCloudJson('/api/balance', apiKey, timeoutMs),
+    fetchCloudJson(`/api/usage?range=${encodeURIComponent(range)}`, apiKey, timeoutMs)
+  ]);
+  return {
+    balance: balance.status === 'fulfilled' ? balance.value : null,
+    balanceError: balance.status === 'rejected' ? balance.reason : null,
+    usage: usage.status === 'fulfilled' ? usage.value : null,
+    usageError: usage.status === 'rejected' ? usage.reason : null
+  };
+}
+
 module.exports = {
+  fetchCloudUsage,
   runWebSearch,
   runWebFetchMany,
   buildWebContextMessage,

@@ -169,7 +169,42 @@ async function raceAbort(promise, signal) {
   }
 }
 
+const formatUsd = (n) => `$${Number(n).toFixed(2)}`;
+const formatDate = (iso) => (iso ? new Date(iso).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : 'unknown');
+
+function formatCloudUsage({ balance, usage } = {}) {
+  const lines = [];
+  const included = balance && balance.included;
+
+  if (included && typeof included.balance_usd === 'number') {
+    const pct = included.allowance_usd > 0
+      ? ` (${Math.round((included.balance_usd / included.allowance_usd) * 100)}% left)`
+      : '';
+    lines.push(`*Included credit:* ${formatUsd(included.balance_usd)} of ${formatUsd(included.allowance_usd)}${pct}, resets ${formatDate(included.period && included.period.until)}`);
+  } else if (included && (included.session || included.weekly)) {
+    for (const [label, limit] of [['Session', included.session], ['Weekly', included.weekly]]) {
+      if (limit) lines.push(`*${label} limit:* ${limit.remaining_percent}% remaining, resets ${formatDate(limit.resets_at)}`);
+    }
+  }
+
+  if (balance && balance.purchased && typeof balance.purchased.balance_usd === 'number') {
+    lines.push(`*Purchased credit:* ${formatUsd(balance.purchased.balance_usd)}`);
+  }
+
+  if (usage && usage.totals) {
+    const t = usage.totals;
+    const parts = [`${t.request_count} requests`];
+    if (typeof t.usage_usd === 'number') parts.push(formatUsd(t.usage_usd));
+    if (typeof t.input_tokens === 'number') parts.push(`${t.input_tokens.toLocaleString('en-US')} input tokens`);
+    if (typeof t.output_tokens === 'number') parts.push(`${t.output_tokens.toLocaleString('en-US')} output tokens`);
+    lines.push(`*Usage (${usage.range}):* ${parts.join(', ')}`);
+  }
+
+  return lines.length ? lines.join('\n') : 'Ollama cloud usage is unavailable right now.';
+}
+
 module.exports = {
+  formatCloudUsage,
   sanitizeText,
   sanitizeSlackBroadcasts,
   detectPromptInjection,
