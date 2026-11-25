@@ -88,7 +88,7 @@ describe('formatCloudUsage', () => {
     const text = formatCloudUsage({ balance: BALANCE, usage: USAGE });
     expect(text).toContain('*Included credit:* $72.50 of $100.00 (73% left), resets 2026-10-15 09:30 UTC');
     expect(text).toContain('*Purchased credit:* $25.00');
-    expect(text).toContain('*Usage (7d):* 15 requests, $0.02, 106,000 input tokens, 13,600 output tokens');
+    expect(text).toContain('*Requests (7d):* 15\n*Cost (7d):* $0.02\n*Input tokens (7d):* 106,000\n*Output tokens (7d):* 13,600');
   });
 
   test('omits included credit when the plan has no allowance', () => {
@@ -103,12 +103,17 @@ describe('formatCloudUsage', () => {
     const text = formatCloudUsage({ balance: LEGACY_BALANCE, usage: null });
     expect(text).toContain('*Session limit:* 75% remaining, resets 2026-10-01 07:00 UTC');
     expect(text).toContain('*Weekly limit:* 40% remaining, resets 2026-10-05 00:00 UTC');
-    expect(text).not.toContain('Usage');
+    expect(text).not.toContain('Requests');
   });
 
   test('omits cost and tokens for legacy usage', () => {
     const text = formatCloudUsage({ balance: null, usage: { range: '24h', totals: { request_count: 3 } } });
-    expect(text).toBe('*Usage (24h):* 3 requests');
+    expect(text).toBe('*Requests (24h):* 3');
+  });
+
+  test('formats as a markdown table', () => {
+    const text = formatCloudUsage({ balance: null, usage: { range: '24h', totals: { request_count: 3 } } }, { table: true });
+    expect(text).toBe('| Metric | Value |\n| --- | --- |\n| Requests (24h) | 3 |');
   });
 
   test('reports unavailable when nothing is returned', () => {
@@ -182,7 +187,7 @@ describe('hubot ollama usage command', () => {
     mockCloud({ range: '30d', usage: { ...USAGE, range: '30d' } });
     await say('hubot ollama usage 30d');
     expect(room.messages[1][1]).toContain('Included credit');
-    expect(room.messages[1][1]).toContain('Usage (30d)');
+    expect(room.messages[1][1]).toContain('Requests (30d)');
     expect(nock.isDone()).toBe(true);
 
     await say('hubot ollama usage 30d');

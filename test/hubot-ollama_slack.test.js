@@ -120,6 +120,30 @@ describe('hubot-ollama slack', () => {
     });
   });
 
+  describe('usage command', () => {
+    it('sends cloud usage as a table block', async () => {
+      process.env.HUBOT_OLLAMA_API_KEY = 'test-key';
+      process.env.HUBOT_OLLAMA_HOST = 'https://ollama.com';
+      room.destroy();
+      room = await helper.createRoom();
+      nock('https://ollama.com').get('/api/balance').reply(200, { purchased: { balance_usd: 4.99 } });
+      nock('https://ollama.com').get('/api/usage').query({ range: '7d' }).reply(200, { range: '7d', totals: { request_count: 3 } });
+
+      await room.user.say('alice', 'hubot ollama usage');
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      const [, payload] = room.messages[1];
+      expect(payload.blocks).toEqual([{
+        type: 'table',
+        rows: [
+          [{ type: 'raw_text', text: 'Metric' }, { type: 'raw_text', text: 'Value' }],
+          [{ type: 'raw_text', text: 'Purchased credit' }, { type: 'raw_text', text: '$4.99' }],
+          [{ type: 'raw_text', text: 'Requests (7d)' }, { type: 'raw_text', text: '3' }],
+        ],
+      }]);
+    });
+  });
+
   describe('Slack Reaction Lifecycle', () => {
     it('adds and removes thought balloon reaction around prompt handling', async () => {
       process.env.HUBOT_OLLAMA_TOOLS_ENABLED = 'false';

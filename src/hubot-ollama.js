@@ -1626,7 +1626,8 @@ IMPORTANT: Keep the summary under 600 characters.`;
     }
     try {
       const result = await getCloudUsage(range);
-      msg.send(formatResponse(formatCloudUsage(result), msg));
+      const table = getAdapterType(robot) === 'slack';
+      msg.send(formatResponse(formatCloudUsage(result, { table }), msg));
     } catch (err) {
       robot.logger.error(`Ollama cloud usage command failed: ${err.message}`);
       msg.send(formatResponse('Unable to retrieve Ollama cloud usage right now.', msg));
