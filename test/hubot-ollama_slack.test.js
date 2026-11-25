@@ -138,7 +138,7 @@ describe('hubot-ollama slack', () => {
         rows: [
           [{ type: 'raw_text', text: 'Metric' }, { type: 'raw_text', text: 'Value' }],
           [{ type: 'raw_text', text: 'Purchased credit' }, { type: 'raw_text', text: '$4.99' }],
-          [{ type: 'raw_text', text: 'Usage (7d)' }, { type: 'raw_text', text: '3 requests' }],
+          [{ type: 'raw_text', text: 'Requests (7d)' }, { type: 'raw_text', text: '3' }],
         ],
       }]);
     });

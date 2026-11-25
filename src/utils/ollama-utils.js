@@ -193,11 +193,11 @@ function cloudUsageRows({ balance, usage } = {}) {
 
   if (usage && usage.totals) {
     const t = usage.totals;
-    const parts = [`${t.request_count} requests`];
-    if (typeof t.usage_usd === 'number') parts.push(formatUsd(t.usage_usd));
-    if (typeof t.input_tokens === 'number') parts.push(`${t.input_tokens.toLocaleString('en-US')} input tokens`);
-    if (typeof t.output_tokens === 'number') parts.push(`${t.output_tokens.toLocaleString('en-US')} output tokens`);
-    rows.push([`Usage (${usage.range})`, parts.join(', ')]);
+    const range = `(${usage.range})`;
+    rows.push([`Requests ${range}`, t.request_count.toLocaleString('en-US')]);
+    if (typeof t.usage_usd === 'number') rows.push([`Cost ${range}`, formatUsd(t.usage_usd)]);
+    if (typeof t.input_tokens === 'number') rows.push([`Input tokens ${range}`, t.input_tokens.toLocaleString('en-US')]);
+    if (typeof t.output_tokens === 'number') rows.push([`Output tokens ${range}`, t.output_tokens.toLocaleString('en-US')]);
   }
 
   return rows;
