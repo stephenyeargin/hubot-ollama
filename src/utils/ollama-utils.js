@@ -172,23 +172,23 @@ async function raceAbort(promise, signal) {
 const formatUsd = (n) => `$${Number(n).toFixed(2)}`;
 const formatDate = (iso) => (iso ? new Date(iso).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : 'unknown');
 
-function formatCloudUsage({ balance, usage } = {}) {
-  const lines = [];
+function cloudUsageRows({ balance, usage } = {}) {
+  const rows = [];
   const included = balance && balance.included;
 
   if (included && typeof included.balance_usd === 'number') {
     if (included.allowance_usd > 0) {
       const pct = Math.round((included.balance_usd / included.allowance_usd) * 100);
-      lines.push(`*Included credit:* ${formatUsd(included.balance_usd)} of ${formatUsd(included.allowance_usd)} (${pct}% left), resets ${formatDate(included.period && included.period.until)}`);
+      rows.push(['Included credit', `${formatUsd(included.balance_usd)} of ${formatUsd(included.allowance_usd)} (${pct}% left), resets ${formatDate(included.period && included.period.until)}`]);
     }
   } else if (included && (included.session || included.weekly)) {
     for (const [label, limit] of [['Session', included.session], ['Weekly', included.weekly]]) {
-      if (limit) lines.push(`*${label} limit:* ${limit.remaining_percent}% remaining, resets ${formatDate(limit.resets_at)}`);
+      if (limit) rows.push([`${label} limit`, `${limit.remaining_percent}% remaining, resets ${formatDate(limit.resets_at)}`]);
     }
   }
 
   if (balance && balance.purchased && typeof balance.purchased.balance_usd === 'number') {
-    lines.push(`*Purchased credit:* ${formatUsd(balance.purchased.balance_usd)}`);
+    rows.push(['Purchased credit', formatUsd(balance.purchased.balance_usd)]);
   }
 
   if (usage && usage.totals) {
@@ -197,10 +197,21 @@ function formatCloudUsage({ balance, usage } = {}) {
     if (typeof t.usage_usd === 'number') parts.push(formatUsd(t.usage_usd));
     if (typeof t.input_tokens === 'number') parts.push(`${t.input_tokens.toLocaleString('en-US')} input tokens`);
     if (typeof t.output_tokens === 'number') parts.push(`${t.output_tokens.toLocaleString('en-US')} output tokens`);
-    lines.push(`*Usage (${usage.range}):* ${parts.join(', ')}`);
+    rows.push([`Usage (${usage.range})`, parts.join(', ')]);
   }
 
-  return lines.length ? lines.join('\n') : 'Ollama cloud usage is unavailable right now.';
+  return rows;
+}
+
+const CLOUD_USAGE_UNAVAILABLE = 'Ollama cloud usage is unavailable right now.';
+
+function formatCloudUsage(result, { table = false } = {}) {
+  const rows = cloudUsageRows(result);
+  if (!rows.length) return CLOUD_USAGE_UNAVAILABLE;
+  if (table) {
+    return ['| Metric | Value |', '| --- | --- |', ...rows.map(([label, value]) => `| ${label} | ${value} |`)].join('\n');
+  }
+  return rows.map(([label, value]) => `*${label}:* ${value}`).join('\n');
 }
 
 module.exports = {

@@ -111,6 +111,11 @@ describe('formatCloudUsage', () => {
     expect(text).toBe('*Usage (24h):* 3 requests');
   });
 
+  test('formats as a markdown table', () => {
+    const text = formatCloudUsage({ balance: null, usage: { range: '24h', totals: { request_count: 3 } } }, { table: true });
+    expect(text).toBe('| Metric | Value |\n| --- | --- |\n| Usage (24h) | 3 requests |');
+  });
+
   test('reports unavailable when nothing is returned', () => {
     expect(formatCloudUsage({ balance: null, usage: null })).toBe('Ollama cloud usage is unavailable right now.');
   });
